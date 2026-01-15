@@ -1,0 +1,40 @@
+# BGP Peers Configuration Example
+# Format: remote_asn,remote_ip,local_ip
+#
+# This file defines BGP peering relationships for Mellanox network interfaces.
+# Peers are automatically assigned to detected Mellanox interfaces in order.
+#
+# Fields:
+#   1. remote_asn   - Remote peer's AS number
+#   2. remote_ip    - Remote peer's IP address
+#   3. local_ip     - Local IP address for this interface (with /30 subnet assumed)
+#
+# Notes:
+#   - Lines starting with # are comments and will be ignored
+#   - Empty lines are ignored
+#   - Whitespace around values is automatically trimmed
+#   - Peers are assigned to Mellanox interfaces in detection order
+#   - First peer → First Mellanox interface
+#   - Second peer → Second Mellanox interface, etc.
+#
+
+# Example 1: Simple two-peer setup
+# These will be assigned to the first two Mellanox interfaces detected
+65100,10.0.1.1,10.0.1.2
+65200,10.0.2.1,10.0.2.2
+
+# Example 2: Multiple peers on different subnets
+# 65300,192.168.1.1,192.168.1.2
+# 65400,192.168.2.1,192.168.2.2
+# 65500,192.168.3.1,192.168.3.2
+
+# Example 3: High ASN numbers (4-byte ASN)
+# 4200000001,10.10.1.1,10.10.1.2
+# 4200000002,10.10.2.1,10.10.2.2
+
+# Example 4: Data center fabric configuration
+# Spine connections (assigned to interfaces in order)
+# 65001,172.16.1.1,172.16.1.2
+# 65001,172.16.2.1,172.16.2.2
+# 65002,172.16.3.1,172.16.3.2
+# 65002,172.16.4.1,172.16.4.2
