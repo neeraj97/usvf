@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Virtual DC Graphical Topology Designer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px 10px 0 0;
+        }
+        
+        .header h1 {
+            margin-bottom: 10px;
+        }
+        
+        .main-content {
+            display: grid;
+            grid-template-columns: 250px 1fr 350px;
+            gap: 20px;
+            padding: 20px;
+        }
+        
+        .sidebar {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        
+        .device-palette {
+            margin-bottom: 20px;
+        }
+        
+        .device-item {
+            background: white;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 6px;
+            cursor: move;
+            border: 2px solid #667eea;
+            text-align: center;
+            font-weight: bold;
+            transition: transform 0.2s;
+        }
+        
+        .device-item:hover {
+            transform: scale(1.05);
+        }
+        
+        .device-item.hypervisor {
+            border-color: #4CAF50;
+            color: #4CAF50;
+        }
+        
+        .device-item.switch {
+            border-color: #2196F3;
+            color: #2196F3;
+        }
+        
+        .canvas-container {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            position: relative;
+            min-height: 600px;
+        }
+        
+        #topology-canvas {
+            width: 100%;
+            height: 600px;
+            cursor: crosshair;
+        }
+        
+        .device {
+            position: absolute;
+            width: 120px;
+            height: 100px;
+            border: 2px solid;
+            border-radius: 8px;
+            background: white;
+            cursor: move;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: bold;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            padding: 5px;
+        }
+        
+        .device.hypervisor {
+            border-color: #4CAF50;
+            color: #4CAF50;
+        }
+        
+        .device.switch {
+            border-color: #2196F3;
+            color: #2196F3;
+        }
+        
+        .device.selected {
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.5);
+        }
+        
+        .device-icon {
+            font-size: 20px;
+            margin-bottom: 3px;
+        }
+        
+        .device-name {
+            font-weight: bold;
+            font-size: 12px;
+            margin-bottom: 2px;
+        }
+        
+        .device-info {
+            font-size: 9px;
+            color: #666;
+            text-align: center;
+            line-height: 1.3;
+        }
+        
+        .properties-panel {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        
+        .property-group {
+            margin-bottom: 20px;
+        }
+        
+        .property-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .property-group input,
+        .property-group select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .btn {
+            background: #667eea;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            margin: 5px;
+            transition: background 0.2s;
+        }
+        
+        .btn:hover {
+            background: #5568d3;
+        }
+        
+        .btn-success {
+            background: #4CAF50;
+        }
+        
+        .btn-success:hover {
+            background: #45a049;
+        }
+        
+        .btn-danger {
+            background: #f44336;
+        }
+        
+        .btn-danger:hover {
+            background: #da190b;
+        }
+        
+        .toolbar {
+            padding: 15px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .yaml-output {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 500px;
+            overflow-y: auto;
+            white-space: pre;
+            margin-top: 20px;
+        }
+        
+        .connection-mode {
+            background: #ff9800;
+        }
+        
+        svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        
+        .connection-line {
+            stroke: #666;
+            stroke-width: 2;
+            fill: none;
+            cursor: pointer;
+        }
+        
+        .connection-line:hover {
+            stroke: #ff5722;
+            stroke-width: 3;
+        }
+        
+        .connection-line.selected {
+            stroke: #ff5722;
+            stroke-width: 3;
+        }
+        
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎨 Virtual DC Graphical Topology Designer</h1>
+            <p>Drag and drop devices, connect them, and generate YAML configuration automatically!</p>
+        </div>
+        
+        <div class="toolbar">
+            <button class="btn" onclick="toggleConnectionMode()">
+                <span id="connection-btn-text">🔗 Connect Mode</span>
+            </button>
+            <button class="btn btn-success" onclick="generateYAML()">📋 Generate YAML</button>
+            <button class="btn" onclick="clearCanvas()">🗑️ Clear All</button>
+            <button class="btn" onclick="exportTopology()">💾 Export</button>
+            <button class="btn" onclick="importTopology()">📂 Import</button>
+        </div>
+        
+        <div class="main-content">
+            <div class="sidebar">
+                <h3>Device Palette</h3>
+                <div class="info-box">
+                    <strong>Instructions:</strong><br>
+                    1. Drag devices to canvas<br>
+                    2. Click "Connect Mode"<br>
+                    3. Click devices to connect<br>
+                    4. Generate YAML
+                </div>
+                <div class="device-palette">
+                    <div class="device-item hypervisor" draggable="true" ondragstart="drag(event, 'hypervisor')">
+                        🖥️ Hypervisor
+                    </div>
+                    <div class="device-item switch" draggable="true" ondragstart="drag(event, 'switch')">
+                        🔀 Switch
+                    </div>
+                </div>
+                
+                <h3>Topology Info</h3>
+                <div id="topology-info">
+                    <p>Hypervisors: <strong id="hv-count">0</strong></p>
+                    <p>Switches: <strong id="sw-count">0</strong></p>
+                    <p>Connections: <strong id="conn-count">0</strong></p>
+                </div>
+            </div>
+            
+            <div class="canvas-container">
+                <svg id="connections-svg"></svg>
+                <div id="topology-canvas" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+            </div>
+            
+            <div class="properties-panel">
+                <h3>Device Properties</h3>
+                <div id="no-selection" style="color: #999;">
+                    Click a device to edit properties
+                </div>
+                <div id="device-properties" style="display: none;">
+                    <div class="property-group">
+                        <label>Device Name:</label>
+                        <input type="text" id="prop-name" onchange="updateSelectedDevice()">
+                    </div>
+                    <div class="property-group">
+                        <label>Device Type:</label>
+                        <input type="text" id="prop-type" disabled>
+                    </div>
+                    <div class="property-group">
+                        <label>Role:</label>
+                        <select id="prop-role" onchange="updateSelectedDevice()">
+                            <option value="">None</option>
+                            <option value="leaf">Leaf</option>
+                            <option value="spine">Spine</option>
+                            <option value="superspine">SuperSpine</option>
+                        </select>
+                    </div>
+                    <div class="property-group">
+                        <label>ASN:</label>
+                        <input type="number" id="prop-asn" onchange="updateSelectedDevice()">
+                    </div>
+                    <div class="property-group">
+                        <label>Router ID:</label>
+                        <input type="text" id="prop-router-id" onchange="updateSelectedDevice()">
+                    </div>
+                    <button class="btn btn-danger" onclick="deleteSelectedDevice()">Delete Device</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="yaml-output" id="yaml-output" style="display:none;"></div>
+    </div>
+    
+    <script>
+        let devices = [];
+        let connections = [];
+        let selectedDevice = null;
+        let connectionMode = false;
+        let connectionStart = null;
+        let deviceCounter = { hypervisor: 0, switch: 0 };
+        
+        function allowDrop(ev) {
+            ev.preventDefault();
+        }
+        
+        function drag(ev, type) {
+            ev.dataTransfer.setData("deviceType", type);
+        }
+        
+        function drop(ev) {
+            ev.preventDefault();
+            const type = ev.dataTransfer.getData("deviceType");
+            const canvas = document.getElementById('topology-canvas');
+            const rect = canvas.getBoundingClientRect();
+            const x = ev.clientX - rect.left - 50;
+            const y = ev.clientY - rect.top - 40;
+            
+            createDevice(type, x, y);
+        }
+        
+        function createDevice(type, x, y) {
+            deviceCounter[type]++;
+            const id = `${type}-${deviceCounter[type]}`;
+            const name = type === 'hypervisor' ? `hv${deviceCounter[type]}` : `${type}-${deviceCounter[type]}`;
+            
+            const device = {
+                id: id,
+                type: type,
+                name: name,
+                role: type === 'switch' ? 'leaf' : '',
+                asn: type === 'hypervisor' ? 65000 + deviceCounter[type] : 65100 + deviceCounter[type],
+                routerId: type === 'hypervisor' ? `1.1.1.${deviceCounter[type]}` : `2.2.2.${deviceCounter[type]}`,
+                x: x,
+                y: y,
+                interfaces: type === 'hypervisor' ? 2 : 32
+            };
+            
+            devices.push(device);
+            renderDevice(device);
+            updateTopologyInfo();
+        }
+        
+        function renderDevice(device) {
+            const canvas = document.getElementById('topology-canvas');
+            const elem = document.createElement('div');
+            elem.className = `device ${device.type}`;
+            elem.id = device.id;
+            elem.style.left = device.x + 'px';
+            elem.style.top = device.y + 'px';
+            elem.innerHTML = `
+                <div class="device-icon">${device.type === 'hypervisor' ? '🖥️' : '🔀'}</div>
+                <div class="device-name">${device.name}</div>
+                <div class="device-info">
+                    ASN: ${device.asn}<br>
+                    RID: ${device.routerId}
+                </div>
+            `;
+            elem.onclick = (e) => handleDeviceClick(device, e);
+            elem.onmousedown = (e) => startDrag(device, e);
+            canvas.appendChild(elem);
+        }
+        
+        function updateDeviceDisplay(device) {
+            const elem = document.getElementById(device.id);
+            if (!elem) return;
+            
+            elem.innerHTML = `
+                <div class="device-icon">${device.type === 'hypervisor' ? '🖥️' : '🔀'}</div>
+                <div class="device-name">${device.name}</div>
+                <div class="device-info">
+                    ASN: ${device.asn}<br>
+                    RID: ${device.routerId}
+                </div>
+            `;
+            elem.onclick = (e) => handleDeviceClick(device, e);
+            elem.onmousedown = (e) => startDrag(device, e);
+        }
+        
+        function handleDeviceClick(device, e) {
+            e.stopPropagation();
+            
+            if (connectionMode) {
+                if (!connectionStart) {
+                    connectionStart = device;
+                    document.getElementById(device.id).style.boxShadow = '0 0 0 3px rgba(255, 152, 0, 0.5)';
+                } else if (connectionStart.id !== device.id) {
+                    createConnection(connectionStart, device);
+                    document.getElementById(connectionStart.id).style.boxShadow = '';
+                    connectionStart = null;
+                }
+            } else {
+                selectDevice(device);
+            }
+        }
+        
+        function selectDevice(device) {
+            // Deselect previous
+            if (selectedDevice) {
+                const prevElem = document.getElementById(selectedDevice.id);
+                if (prevElem) prevElem.classList.remove('selected');
+            }
+            
+            selectedDevice = device;
+            document.getElementById(device.id).classList.add('selected');
+            
+            // Show properties
+            document.getElementById('no-selection').style.display = 'none';
+            document.getElementById('device-properties').style.display = 'block';
+            document.getElementById('prop-name').value = device.name;
+            document.getElementById('prop-type').value = device.type;
+            document.getElementById('prop-role').value = device.role || '';
+            document.getElementById('prop-asn').value = device.asn;
+            document.getElementById('prop-router-id').value = device.routerId;
+        }
+        
+        function updateSelectedDevice() {
+            if (!selectedDevice) return;
+            
+            selectedDevice.name = document.getElementById('prop-name').value;
+            selectedDevice.role = document.getElementById('prop-role').value;
+            selectedDevice.asn = parseInt(document.getElementById('prop-asn').value);
+            selectedDevice.routerId = document.getElementById('prop-router-id').value;
+            
+            // Update display
+            updateDeviceDisplay(selectedDevice);
+        }
+        
+        function deleteSelectedDevice() {
+            if (!selectedDevice) return;
+            
+            // Remove from devices array
+            devices = devices.filter(d => d.id !== selectedDevice.id);
+            
+            // Remove connections
+            connections = connections.filter(c => 
+                c.source.id !== selectedDevice.id && c.destination.id !== selectedDevice.id
+            );
+            
+            // Remove from DOM
+            document.getElementById(selectedDevice.id).remove();
+            
+            selectedDevice = null;
+            document.getElementById('no-selection').style.display = 'block';
+            document.getElementById('device-properties').style.display = 'none';
+            
+            updateTopologyInfo();
+            redrawConnections();
+        }
+        
+        function createConnection(source, dest) {
+            const conn = {
+                source: source,
+                destination: dest,
+                sourceInterface: `eth${connections.filter(c => c.source.id === source.id).length + 1}`,
+                destInterface: dest.type === 'switch' ? `Ethernet${connections.filter(c => c.destination.id === dest.id).length + 1}` : `eth${connections.filter(c => c.destination.id === dest.id).length + 1}`
+            };
+            
+            connections.push(conn);
+            redrawConnections();
+            updateTopologyInfo();
+        }
+        
+        function redrawConnections() {
+            const svg = document.getElementById('connections-svg');
+            svg.innerHTML = '';
+            svg.style.pointerEvents = 'auto';
+            
+            connections.forEach((conn, idx) => {
+                const source = document.getElementById(conn.source.id);
+                const dest = document.getElementById(conn.destination.id);
+                
+                if (source && dest) {
+                    const sourceRect = source.getBoundingClientRect();
+                    const destRect = dest.getBoundingClientRect();
+                    const canvasRect = document.getElementById('topology-canvas').getBoundingClientRect();
+                    
+                    const x1 = sourceRect.left - canvasRect.left + sourceRect.width / 2;
+                    const y1 = sourceRect.top - canvasRect.top + sourceRect.height / 2;
+                    const x2 = destRect.left - canvasRect.left + destRect.width / 2;
+                    const y2 = destRect.top - canvasRect.top + destRect.height / 2;
+                    
+                    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    line.setAttribute('class', 'connection-line');
+                    line.setAttribute('x1', x1);
+                    line.setAttribute('y1', y1);
+                    line.setAttribute('x2', x2);
+                    line.setAttribute('y2', y2);
+                    line.setAttribute('data-conn-idx', idx);
+                    line.style.pointerEvents = 'stroke';
+                    line.style.strokeWidth = '8'; // Wider invisible stroke for easier clicking
+                    
+                    // Create a visible line on top
+                    const visibleLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    visibleLine.setAttribute('class', 'connection-line');
+                    visibleLine.setAttribute('x1', x1);
+                    visibleLine.setAttribute('y1', y1);
+                    visibleLine.setAttribute('x2', x2);
+                    visibleLine.setAttribute('y2', y2);
+                    visibleLine.style.pointerEvents = 'none';
+                    
+                    line.onclick = (e) => handleConnectionClick(idx, e);
+                    line.onmouseover = (e) => {
+                        visibleLine.style.stroke = '#ff5722';
+                        visibleLine.style.strokeWidth = '3';
+                    };
+                    line.onmouseout = (e) => {
+                        visibleLine.style.stroke = '#666';
+                        visibleLine.style.strokeWidth = '2';
+                    };
+                    
+                    svg.appendChild(line);
+                    svg.appendChild(visibleLine);
+                }
+            });
+        }
+        
+        function handleConnectionClick(connIdx, e) {
+            e.stopPropagation();
+            const conn = connections[connIdx];
+            if (confirm(`Delete connection between ${conn.source.name} and ${conn.destination.name}?`)) {
+                connections.splice(connIdx, 1);
+                redrawConnections();
+                updateTopologyInfo();
+            }
+        }
+        
+        function toggleConnectionMode() {
+            connectionMode = !connectionMode;
+            const btn = document.getElementById('connection-btn-text');
+            if (connectionMode) {
+                btn.textContent = '✅ Connecting...';
+                btn.parentElement.classList.add('connection-mode');
+            } else {
+                btn.textContent = '🔗 Connect Mode';
+                btn.parentElement.classList.remove('connection-mode');
+                if (connectionStart) {
+                    document.getElementById(connectionStart.id).style.boxShadow = '';
+                    connectionStart = null;
+                }
+            }
+        }
+        
+        function updateTopologyInfo() {
+            const hvCount = devices.filter(d => d.type === 'hypervisor').length;
+            const swCount = devices.filter(d => d.type === 'switch').length;
+            
+            document.getElementById('hv-count').textContent = hvCount;
+            document.getElementById('sw-count').textContent = swCount;
+            document.getElementById('conn-count').textContent = connections.length;
+        }
+        
+        function generateYAML() {
+            const yaml = buildYAML();
+            const output = document.getElementById('yaml-output');
+            output.textContent = yaml;
+            output.style.display = 'block';
+            
+            // Auto-download
+            const blob = new Blob([yaml], { type: 'text/yaml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'topology.yaml';
+            a.click();
+        }
+        
+        function buildYAML() {
+            let yaml = `# Auto-generated topology configuration\n`;
+            yaml += `# Generated: ${new Date().toISOString()}\n\n`;
+            yaml += `global:\n`;
+            yaml += `  datacenter_name: "graphical-dc"\n`;
+            yaml += `  virtualization_platform: "kvm"\n`;
+            yaml += `  management_network:\n`;
+            yaml += `    subnet: "192.168.100.0/24"\n`;
+            yaml += `    gateway: "192.168.100.1"\n\n`;
+            
+            // Hypervisors
+            yaml += `hypervisors:\n`;
+            const hypervisors = devices.filter(d => d.type === 'hypervisor');
+            hypervisors.forEach((hv, idx) => {
+                yaml += `  - name: "${hv.name}"\n`;
+                yaml += `    short_name: "${hv.name}"\n`;
+                yaml += `    router_id: "${hv.routerId}"\n`;
+                yaml += `    asn: ${hv.asn}\n`;
+                yaml += `    management:\n`;
+                yaml += `      ip: "192.168.100.${11 + idx}/24"\n`;
+                yaml += `    data_interfaces:\n`;
+                
+                const hvConns = connections.filter(c => c.source.id === hv.id);
+                hvConns.forEach(conn => {
+                    yaml += `      - name: "${conn.sourceInterface}"\n`;
+                    yaml += `        description: "To ${conn.destination.name}"\n`;
+                });
+                
+                yaml += `    resources:\n`;
+                yaml += `      cpu: 4\n`;
+                yaml += `      memory: 4096\n`;
+                yaml += `      disk: 50\n\n`;
+            });
+            
+            // Switches
+            yaml += `switches:\n`;
+            const switches = devices.filter(d => d.type === 'switch');
+            switches.forEach((sw, idx) => {
+                yaml += `  - name: "${sw.name}"\n`;
+                yaml += `    device_type: "switch"\n`;
+                yaml += `    role: "${sw.role || 'leaf'}"\n`;
+                yaml += `    router_id: "${sw.routerId}"\n`;
+                yaml += `    asn: ${sw.asn}\n`;
+                yaml += `    management:\n`;
+                yaml += `      ip: "192.168.100.${101 + idx}/24"\n`;
+                yaml += `    ports: 32\n`;
+                yaml += `    port_speed: "10G"\n\n`;
+            });
+            
+            // Cabling
+            yaml += `cabling:\n`;
+            connections.forEach(conn => {
+                yaml += `  - source:\n`;
+                yaml += `      device: "${conn.source.name}"\n`;
+                yaml += `      interface: "${conn.sourceInterface}"\n`;
+                yaml += `    destination:\n`;
+                yaml += `      device: "${conn.destination.name}"\n`;
+                yaml += `      interface: "${conn.destInterface}"\n`;
+                yaml += `    link_type: "p2p"\n\n`;
+            });
+            
+            return yaml;
+        }
+        
+        function clearCanvas() {
+            if (!confirm('Clear all devices and connections?')) return;
+            
+            devices = [];
+            connections = [];
+            deviceCounter = { hypervisor: 0, switch: 0 };
+            selectedDevice = null;
+            
+            document.getElementById('topology-canvas').innerHTML = '';
+            document.getElementById('connections-svg').innerHTML = '';
+            document.getElementById('no-selection').style.display = 'block';
+            document.getElementById('device-properties').style.display = 'none';
+            document.getElementById('yaml-output').style.display = 'none';
+            
+            updateTopologyInfo();
+        }
+        
+        function exportTopology() {
+            const data = {
+                devices: devices,
+                connections: connections.map(c => ({
+                    sourceId: c.source.id,
+                    destId: c.destination.id,
+                    sourceInterface: c.sourceInterface,
+                    destInterface: c.destInterface
+                })),
+                deviceCounter: deviceCounter
+            };
+            
+            const json = JSON.stringify(data, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'topology-design.json';
+            a.click();
+        }
+        
+        function importTopology() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const data = JSON.parse(event.target.result);
+                        loadTopology(data);
+                    } catch (err) {
+                        alert('Error loading topology: ' + err.message);
+                    }
+                };
+                reader.readAsText(file);
+            };
+            input.click();
+        }
+        
+        function loadTopology(data) {
+            clearCanvas();
+            
+            devices = data.devices;
+            deviceCounter = data.deviceCounter;
+            
+            devices.forEach(device => renderDevice(device));
+            
+            data.connections.forEach(connData => {
+                const source = devices.find(d => d.id === connData.sourceId);
+                const dest = devices.find(d => d.id === connData.destId);
+                if (source && dest) {
+                    connections.push({
+                        source: source,
+                        destination: dest,
+                        sourceInterface: connData.sourceInterface,
+                        destInterface: connData.destInterface
+                    });
+                }
+            });
+            
+            redrawConnections();
+            updateTopologyInfo();
+        }
+        
+        let dragDevice = null;
+        let dragOffsetX = 0;
+        let dragOffsetY = 0;
+        
+        function startDrag(device, e) {
+            if (connectionMode) return;
+            
+            dragDevice = device;
+            const elem = document.getElementById(device.id);
+            const rect = elem.getBoundingClientRect();
+            const canvas = document.getElementById('topology-canvas');
+            const canvasRect = canvas.getBoundingClientRect();
+            
+            dragOffsetX = e.clientX - rect.left;
+            dragOffsetY = e.clientY - rect.top;
+            
+            document.onmousemove = doDrag;
+            document.onmouseup = stopDrag;
+            e.preventDefault();
+        }
+        
+        function doDrag(e) {
+            if (!dragDevice) return;
+            
+            const canvas = document.getElementById('topology-canvas');
+            const rect = canvas.getBoundingClientRect();
+            
+            const x = e.clientX - rect.left - dragOffsetX;
+            const y = e.clientY - rect.top - dragOffsetY;
+            
+            dragDevice.x = Math.max(0, Math.min(x, rect.width - 100));
+            dragDevice.y = Math.max(0, Math.min(y, rect.height - 80));
+            
+            const elem = document.getElementById(dragDevice.id);
+            elem.style.left = dragDevice.x + 'px';
+            elem.style.top = dragDevice.y + 'px';
+            
+            redrawConnections();
+        }
+        
+        function stopDrag() {
+            dragDevice = null;
+            document.onmousemove = null;
+            document.onmouseup = null;
+        }
+    </script>
+</body>
+</html>
