@@ -224,7 +224,7 @@ check_and_install_tool() {
     local tool_name="$1"
     local tool_desc="$2"
     local install_type="$3"
-    local install_packages="$4"
+    local install_packages="${4:-}"  # Optional parameter with default empty value
     local interactive_mode="${INTERACTIVE_INSTALL:-true}"
     
     if command -v "$tool_name" &> /dev/null; then
