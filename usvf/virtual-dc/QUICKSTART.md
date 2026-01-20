@@ -9,10 +9,15 @@ Get your virtual datacenter up and running in 15 minutes!
 ```bash
 cd usvf/virtual-dc
 
-# Ubuntu/Debian
+# Option 1: Interactive Installation (Recommended - Easiest!)
+# The script will check each tool and ask if you want to install it
+./scripts/deploy-virtual-dc.sh --check-prereqs
+
+# Option 2: Manual Installation
 sudo apt-get update && sudo apt-get install -y \
     qemu-kvm libvirt-daemon-system libvirt-clients virtinst \
-    bridge-utils virt-manager iproute2 jq genisoimage
+    bridge-utils virt-manager iproute2 jq genisoimage \
+    cloud-image-utils whois wget curl
 
 # Install yq
 sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
@@ -24,14 +29,37 @@ sudo usermod -aG libvirt,kvm $USER
 # ⚠️ IMPORTANT: Log out and back in for group changes to take effect!
 ```
 
+**Interactive Installation Example:**
+```
+Checking Required Tools
+═══════════════════════════════════════════════════════
+
+✓ YAML parser (yq) yq version 4.35.1
+✗ JSON processor (jq) is not installed
+
+  Would you like to install JSON processor now? (y/N): y
+  Installing JSON processor...
+  ✓ Installation completed
+✓ JSON processor installed successfully
+```
+
 ### Step 2: Verify Setup (1 minute)
 
 ```bash
-# After logging back in
+# After logging back in (if you manually installed prerequisites)
 ./scripts/deploy-virtual-dc.sh --validate
+
+# Or if you used interactive installation, it already verified everything!
 ```
 
 If you see ✓ for all checks, you're ready to go!
+
+**What gets checked:**
+- ✅ Ubuntu 24.04 detected
+- ✅ All required tools installed
+- ✅ Hardware virtualization enabled
+- ✅ libvirt daemon running
+- ✅ Ubuntu 24.04 cloud image downloaded
 
 ### Step 3: Choose Your Topology (1 minute)
 

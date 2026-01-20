@@ -56,9 +56,9 @@ This system allows you to design and deploy a complete virtual datacenter infras
 
 ### Required Software
 
-- **Operating System**: Linux (Ubuntu 22.04+ recommended) or macOS
+- **Operating System**: Ubuntu 24.04 LTS (Noble Numbat) recommended
 - **Virtualization**: KVM/QEMU with libvirt
-- **Hypervisor OS**: Ubuntu 24.04 LTS (Noble Numbat) - automatically downloaded
+- **Hypervisor OS**: Ubuntu 24.04 LTS cloud images - automatically downloaded
 - **Tools**: yq, jq, virsh, virt-install, qemu-img, wget/curl
 - **Network**: iproute2, bridge-utils
 - **SSH**: openssh-client
@@ -74,6 +74,21 @@ This system allows you to design and deploy a complete virtual datacenter infras
 
 #### Ubuntu/Debian
 
+**Option 1: Interactive Installation (Recommended)**
+```bash
+cd usvf/virtual-dc
+
+# Check prerequisites - will prompt to install missing tools
+./scripts/deploy-virtual-dc.sh --check-prereqs
+```
+
+The script will check each tool and ask if you want to install it:
+- Installs one tool at a time with user confirmation
+- Shows progress for each installation
+- Automatically handles dependencies
+- Sets up user groups and services
+
+**Option 2: Manual Installation**
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
@@ -98,12 +113,7 @@ sudo systemctl start libvirtd
 
 **Note**: The deployment script will automatically download Ubuntu 24.04 LTS (Noble Numbat) cloud images for hypervisor VMs.
 
-#### macOS
-
-```bash
-brew install qemu libvirt virt-manager yq jq iproute2mac
-brew services start libvirt
-```
+**Important**: This system is designed specifically for Ubuntu 24.04 LTS and requires KVM/QEMU virtualization which is Linux-only. macOS is not supported.
 
 ## Quick Start
 
@@ -112,8 +122,11 @@ brew services start libvirt
 ```bash
 cd usvf/virtual-dc
 
-# Check and install prerequisites (includes Ubuntu 24.04 image download)
+# Interactive check - prompts to install missing tools one by one
 ./scripts/deploy-virtual-dc.sh --check-prereqs
+
+# Non-interactive check - just reports missing tools
+INTERACTIVE_INSTALL=false ./scripts/deploy-virtual-dc.sh --check-prereqs
 
 # Or just validate configuration
 ./scripts/deploy-virtual-dc.sh --validate
@@ -121,9 +134,19 @@ cd usvf/virtual-dc
 
 The `--check-prereqs` option will:
 - ✅ Verify all required tools are installed
+- ✅ **Interactively prompt to install missing tools** (can be disabled)
 - ✅ Check hardware virtualization support
 - ✅ Download Ubuntu 24.04 LTS cloud image (~700MB)
 - ✅ Validate network configuration
+
+**Interactive Installation Example:**
+```
+✗ YAML parser (yq) is not installed
+
+  Would you like to install YAML parser now? (y/N): y
+  Installing yq YAML parser...
+  ✓ yq installed successfully
+```
 
 ### 2. Review Configuration
 
@@ -180,9 +203,9 @@ Open the web-based graphical designer:
 
 ```bash
 # Open in browser
-open scripts/graphical-designer.html
-# or
 firefox scripts/graphical-designer.html
+# or
+xdg-open scripts/graphical-designer.html
 ```
 
 Features:

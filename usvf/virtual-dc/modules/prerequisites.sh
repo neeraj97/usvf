@@ -12,70 +12,102 @@
 check_prerequisites() {
     log_info "Checking system prerequisites..."
     
-    local missing_tools=()
     local virtualization_ok=true
+    local interactive_mode="${INTERACTIVE_INSTALL:-true}"
     
-    # Check operating system
-    if [[ "$(uname)" != "Linux" ]] && [[ "$(uname)" != "Darwin" ]]; then
+    # Check operating system - Ubuntu 24.04 only
+    if [[ "$(uname)" != "Linux" ]]; then
         log_error "Unsupported operating system: $(uname)"
-        log_error "This tool requires Linux or macOS"
+        log_error "This tool requires Linux (Ubuntu 24.04 LTS recommended)"
         return 1
     fi
     
-    # Check if running on macOS
-    if [[ "$(uname)" == "Darwin" ]]; then
-        log_warn "Running on macOS - some features may require additional setup"
+    # Check for Ubuntu
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        if [[ "$ID" == "ubuntu" ]]; then
+            log_success "✓ Running on Ubuntu $VERSION_ID"
+            if [[ "$VERSION_ID" != "24.04" ]]; then
+                log_warn "Warning: Ubuntu 24.04 LTS is recommended, you are running $VERSION_ID"
+            fi
+        else
+            log_warn "Warning: Ubuntu 24.04 LTS is recommended, detected: $ID $VERSION_ID"
+        fi
     fi
     
-    # Check for required tools
-    check_tool "yq" "YAML parser" "brew install yq" missing_tools
-    check_tool "jq" "JSON processor" "brew install jq" missing_tools
-    check_tool "virsh" "KVM management" "Install libvirt: brew install libvirt (macOS) or apt install libvirt-clients (Ubuntu)" missing_tools
-    check_tool "virt-install" "VM installation" "Install virt-install: brew install virt-manager (macOS) or apt install virtinst (Ubuntu)" missing_tools
-    check_tool "qemu-img" "Disk image management" "Install QEMU: brew install qemu (macOS) or apt install qemu-utils (Ubuntu)" missing_tools
-    check_tool "wget" "File download" "Install wget: brew install wget (macOS) or apt install wget (Ubuntu)" missing_tools
-    check_tool "curl" "File download" "Install curl: brew install curl (macOS) or apt install curl (Ubuntu)" missing_tools
+    echo ""
+    log_info "═══════════════════════════════════════════════════════"
+    log_info "  Checking Required Tools"
+    log_info "═══════════════════════════════════════════════════════"
+    echo ""
     
-    # Network tools
-    check_tool "ip" "Network configuration" "Install iproute2: brew install iproute2mac (macOS) or apt install iproute2 (Ubuntu)" missing_tools
+    # Check for required tools with interactive installation
+    check_and_install_tool "yq" "YAML parser" "yq_install"
+    check_and_install_tool "jq" "JSON processor" "apt_install" "jq"
+    check_and_install_tool "virsh" "KVM management" "apt_install" "libvirt-daemon-system libvirt-clients"
+    check_and_install_tool "virt-install" "VM installation" "apt_install" "virtinst"
+    check_and_install_tool "qemu-img" "Disk image management" "apt_install" "qemu-kvm qemu-utils"
+    check_and_install_tool "wget" "File download" "apt_install" "wget"
+    check_and_install_tool "curl" "File download" "apt_install" "curl"
+    check_and_install_tool "ip" "Network configuration" "apt_install" "iproute2"
+    check_and_install_tool "ssh" "SSH client" "apt_install" "openssh-client"
+    check_and_install_tool "ssh-keygen" "SSH key generation" "apt_install" "openssh-client"
+    check_and_install_tool "genisoimage" "ISO creation" "apt_install" "genisoimage"
+    check_and_install_tool "cloud-localds" "Cloud-init" "apt_install" "cloud-image-utils"
+    check_and_install_tool "mkpasswd" "Password hashing" "apt_install" "whois"
     
-    # Check for SSH
-    check_tool "ssh" "SSH client" "Install OpenSSH: brew install openssh" missing_tools
-    check_tool "ssh-keygen" "SSH key generation" "Install OpenSSH: brew install openssh" missing_tools
+    echo ""
+    log_info "═══════════════════════════════════════════════════════"
+    log_info "  Checking System Configuration"
+    log_info "═══════════════════════════════════════════════════════"
+    echo ""
     
-    # Check virtualization support (Linux only)
-    if [[ "$(uname)" == "Linux" ]]; then
-        if ! check_virtualization_support; then
-            virtualization_ok=false
-            log_error "Hardware virtualization is not enabled or not supported"
-            log_error "Please enable VT-x/AMD-V in BIOS settings"
-        else
-            log_success "✓ Hardware virtualization is enabled"
-        fi
+    # Check virtualization support
+    if ! check_virtualization_support; then
+        virtualization_ok=false
+        log_error "✗ Hardware virtualization is not enabled or not supported"
+        log_error "  Please enable VT-x/AMD-V in BIOS settings"
+    else
+        log_success "✓ Hardware virtualization is enabled"
     fi
     
     # Check libvirt daemon
     if command -v virsh &> /dev/null; then
-        if ! virsh list &> /dev/null; then
-            log_warn "libvirt daemon is not running or not accessible"
-            log_info "Try starting it: sudo systemctl start libvirtd (Linux) or brew services start libvirt (macOS)"
+        if ! virsh list &> /dev/null 2>&1; then
+            log_warn "✗ libvirt daemon is not running or not accessible"
+            
+            if [[ "$interactive_mode" == "true" ]]; then
+                echo ""
+                read -p "Would you like to start the libvirt daemon? (y/N): " -n 1 -r
+                echo ""
+                
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    log_info "Starting libvirt daemon..."
+                    sudo systemctl enable libvirtd
+                    sudo systemctl start libvirtd
+                    
+                    if virsh list &> /dev/null 2>&1; then
+                        log_success "✓ libvirt daemon started successfully"
+                    else
+                        log_error "Failed to start libvirt daemon"
+                        log_info "You may need to add your user to libvirt group:"
+                        log_info "  sudo usermod -aG libvirt $USER"
+                        log_info "  Then log out and back in"
+                    fi
+                fi
+            else
+                log_info "Run: sudo systemctl start libvirtd"
+            fi
         else
             log_success "✓ libvirt daemon is running"
         fi
     fi
     
-    # Report missing tools
-    if [[ ${#missing_tools[@]} -gt 0 ]]; then
-        log_error "Missing required tools:"
-        for tool_info in "${missing_tools[@]}"; do
-            log_error "  - $tool_info"
-        done
-        return 1
-    fi
-    
     if [[ "$virtualization_ok" == "false" ]]; then
         return 1
     fi
+    
+    echo ""
     
     # Check disk space
     check_disk_space
@@ -86,7 +118,12 @@ check_prerequisites() {
     # Check and download Ubuntu 24.04 images
     check_ubuntu_images
     
-    log_success "✓ All prerequisites are met"
+    echo ""
+    log_success "═══════════════════════════════════════════════════════"
+    log_success "  All prerequisites are met!"
+    log_success "═══════════════════════════════════════════════════════"
+    echo ""
+    
     return 0
 }
 
@@ -105,11 +142,7 @@ check_ubuntu_images() {
         log_success "✓ Ubuntu 24.04 cloud image exists (${image_size})"
         
         # Check if image is recent (less than 30 days old)
-        if [[ "$(uname)" == "Darwin" ]]; then
-            local image_age=$(( ($(date +%s) - $(stat -f %m "$ubuntu_image")) / 86400 ))
-        else
-            local image_age=$(( ($(date +%s) - $(stat -c %Y "$ubuntu_image")) / 86400 ))
-        fi
+        local image_age=$(( ($(date +%s) - $(stat -c %Y "$ubuntu_image")) / 86400 ))
         
         if [[ $image_age -gt 30 ]]; then
             log_warn "Ubuntu image is ${image_age} days old. Consider updating it."
@@ -187,19 +220,122 @@ prepare_vm_image() {
     fi
 }
 
-check_tool() {
+check_and_install_tool() {
     local tool_name="$1"
     local tool_desc="$2"
-    local install_cmd="$3"
-    local -n missing_ref=$4
+    local install_type="$3"
+    local install_packages="$4"
+    local interactive_mode="${INTERACTIVE_INSTALL:-true}"
     
     if command -v "$tool_name" &> /dev/null; then
         local version=$(get_tool_version "$tool_name")
-        log_success "✓ $tool_desc ($tool_name) is installed $version"
+        log_success "✓ $tool_desc ($tool_name) $version"
         return 0
     else
         log_warn "✗ $tool_desc ($tool_name) is not installed"
-        missing_ref+=("$tool_desc ($tool_name) - Install: $install_cmd")
+        
+        if [[ "$interactive_mode" == "true" ]]; then
+            echo ""
+            read -p "  Would you like to install $tool_desc now? (y/N): " -n 1 -r
+            echo ""
+            
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                case "$install_type" in
+                    apt_install)
+                        install_via_apt "$tool_desc" "$install_packages"
+                        ;;
+                    yq_install)
+                        install_yq
+                        ;;
+                    *)
+                        log_error "Unknown installation type: $install_type"
+                        return 1
+                        ;;
+                esac
+                
+                # Verify installation
+                if command -v "$tool_name" &> /dev/null; then
+                    log_success "✓ $tool_desc installed successfully"
+                    return 0
+                else
+                    log_error "✗ $tool_desc installation may have failed"
+                    return 1
+                fi
+            else
+                log_info "  Skipping $tool_desc installation"
+                return 1
+            fi
+        else
+            # Non-interactive mode - just report
+            log_info "  Install with: "
+            case "$install_type" in
+                apt_install)
+                    log_info "    sudo apt install -y $install_packages"
+                    ;;
+                yq_install)
+                    log_info "    sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq"
+                    log_info "    sudo chmod +x /usr/local/bin/yq"
+                    ;;
+            esac
+            return 1
+        fi
+    fi
+}
+
+install_via_apt() {
+    local tool_desc="$1"
+    local packages="$2"
+    
+    log_info "  Installing $tool_desc..."
+    
+    # Update package list if not updated recently
+    local apt_cache_age=0
+    if [[ -f /var/cache/apt/pkgcache.bin ]]; then
+        apt_cache_age=$(( ($(date +%s) - $(stat -c %Y /var/cache/apt/pkgcache.bin)) / 3600 ))
+    fi
+    
+    if [[ $apt_cache_age -gt 24 ]]; then
+        log_info "  Updating package cache..."
+        sudo apt-get update -qq
+    fi
+    
+    # Install packages
+    sudo apt-get install -y $packages
+    
+    if [[ $? -eq 0 ]]; then
+        log_success "  ✓ Installation completed"
+        
+        # Special handling for libvirt
+        if [[ "$packages" == *"libvirt"* ]]; then
+            log_info "  Adding user to libvirt and kvm groups..."
+            sudo usermod -aG libvirt "$USER"
+            sudo usermod -aG kvm "$USER"
+            sudo systemctl enable libvirtd
+            sudo systemctl start libvirtd
+            log_warn "  Note: You may need to log out and back in for group changes to take effect"
+        fi
+        
+        return 0
+    else
+        log_error "  ✗ Installation failed"
+        return 1
+    fi
+}
+
+install_yq() {
+    log_info "  Installing yq YAML parser..."
+    
+    local yq_url="https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64"
+    local yq_path="/usr/local/bin/yq"
+    
+    sudo wget -q --show-progress "$yq_url" -O "$yq_path"
+    
+    if [[ $? -eq 0 ]]; then
+        sudo chmod +x "$yq_path"
+        log_success "  ✓ yq installed successfully"
+        return 0
+    else
+        log_error "  ✗ Failed to download yq"
         return 1
     fi
 }
@@ -223,11 +359,6 @@ get_tool_version() {
 }
 
 check_virtualization_support() {
-    if [[ "$(uname)" == "Darwin" ]]; then
-        # macOS - assume virtualization is available
-        return 0
-    fi
-    
     # Check for Intel VT-x or AMD-V
     if grep -qE 'vmx|svm' /proc/cpuinfo 2>/dev/null; then
         return 0
@@ -244,13 +375,7 @@ check_virtualization_support() {
 check_disk_space() {
     log_info "Checking available disk space..."
     
-    local available_gb
-    if [[ "$(uname)" == "Darwin" ]]; then
-        available_gb=$(df -g / | awk 'NR==2 {print $4}')
-    else
-        available_gb=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
-    fi
-    
+    local available_gb=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
     local required_gb=100
     
     if [[ $available_gb -lt $required_gb ]]; then
@@ -289,23 +414,16 @@ install_prerequisites() {
     if [[ -f /etc/os-release ]]; then
         . /etc/os-release
         os_type="$ID"
-    elif [[ "$(uname)" == "Darwin" ]]; then
-        os_type="macos"
     fi
     
     case "$os_type" in
         ubuntu|debian)
             install_ubuntu_prerequisites
             ;;
-        centos|rhel|fedora)
-            install_rhel_prerequisites
-            ;;
-        macos)
-            install_macos_prerequisites
-            ;;
         *)
-            log_error "Unsupported OS for automatic installation: $os_type"
-            log_info "Please install prerequisites manually"
+            log_error "Unsupported OS: $os_type"
+            log_error "This tool is designed for Ubuntu 24.04 LTS only"
+            log_info "Please install prerequisites manually or use Ubuntu 24.04"
             return 1
             ;;
     esac
@@ -347,62 +465,6 @@ install_ubuntu_prerequisites() {
     sudo systemctl start libvirtd
     
     log_success "Prerequisites installed. Please log out and back in for group changes to take effect."
-    
-    # Download Ubuntu 24.04 image
-    check_ubuntu_images
-}
-
-install_rhel_prerequisites() {
-    log_info "Installing prerequisites for RHEL/CentOS/Fedora..."
-    
-    sudo dnf install -y \
-        qemu-kvm \
-        libvirt \
-        virt-install \
-        bridge-utils \
-        virt-manager \
-        iproute \
-        jq \
-        wget \
-        curl \
-        cloud-utils \
-        genisoimage
-    
-    # Install yq
-    if ! command -v yq &> /dev/null; then
-        log_info "Installing yq YAML parser..."
-        sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
-        sudo chmod +x /usr/local/bin/yq
-    fi
-    
-    # Add user to libvirt group
-    sudo usermod -aG libvirt "$USER"
-    
-    # Enable and start libvirt
-    sudo systemctl enable libvirtd
-    sudo systemctl start libvirtd
-    
-    log_success "Prerequisites installed. Please log out and back in for group changes to take effect."
-    
-    # Download Ubuntu 24.04 image
-    check_ubuntu_images
-}
-
-install_macos_prerequisites() {
-    log_info "Installing prerequisites for macOS..."
-    
-    if ! command -v brew &> /dev/null; then
-        log_error "Homebrew is not installed. Please install it first:"
-        log_error "  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
-        return 1
-    fi
-    
-    brew install qemu libvirt virt-manager yq jq iproute2mac wget curl cdrtools
-    
-    # Start libvirt
-    brew services start libvirt
-    
-    log_success "Prerequisites installed for macOS"
     
     # Download Ubuntu 24.04 image
     check_ubuntu_images

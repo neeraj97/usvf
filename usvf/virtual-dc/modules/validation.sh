@@ -17,7 +17,9 @@ validate_configuration() {
     
     # Check if yq is installed for YAML parsing
     if ! command -v yq &> /dev/null; then
-        log_error "yq is not installed. Please install it: brew install yq"
+        log_error "yq is not installed. Please install it:"
+        log_error "  sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq"
+        log_error "  sudo chmod +x /usr/local/bin/yq"
         return 1
     fi
     
