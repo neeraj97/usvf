@@ -341,10 +341,14 @@ update_vdc_config() {
     yq eval ".global.management_network.subnet = \"${mgmt_subnet}\"" -i "$config_file"
     
     # Update gateway (first IP in subnet)
-    local gateway=$(echo "$mgmt_subnet" | sed 's|/24|.1|')
+    # Extract network portion: 192.168.10.0/24 -> 192.168.10
+    local subnet_ip=$(echo "$mgmt_subnet" | cut -d'/' -f1)
+    local network_base=$(echo "$subnet_ip" | sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+$/\1/')
+    local gateway="${network_base}.1"
+    
     yq eval ".global.management_network.gateway = \"${gateway}\"" -i "$config_file"
     
-    log_success "Updated VDC configuration"
+    log_success "Updated VDC configuration (gateway: $gateway)"
 }
 
 ################################################################################
