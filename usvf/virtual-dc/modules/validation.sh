@@ -177,7 +177,7 @@ validate_ip_addresses() {
         local ip=$(yq eval ".hypervisors[$i].management.ip" "$config_file" | cut -d'/' -f1)
         local name=$(yq eval ".hypervisors[$i].name" "$config_file")
         
-        if [[ -n "${ip_map[$ip]}" ]]; then
+        if [[ -n "${ip_map[$ip]:-}" ]]; then
             log_error "Duplicate IP address $ip found: ${ip_map[$ip]} and $name"
             return 1
         fi
@@ -191,7 +191,7 @@ validate_ip_addresses() {
             local ip=$(yq eval ".switches.$tier[$i].management.ip" "$config_file" | cut -d'/' -f1)
             local name=$(yq eval ".switches.$tier[$i].name" "$config_file")
             
-            if [[ "$ip" != "null" ]] && [[ -n "${ip_map[$ip]}" ]]; then
+            if [[ "$ip" != "null" ]] && [[ -n "${ip_map[$ip]:-}" ]]; then
                 log_error "Duplicate IP address $ip found: ${ip_map[$ip]} and $name"
                 return 1
             fi
@@ -221,7 +221,7 @@ validate_router_ids() {
         local rid=$(yq eval ".hypervisors[$i].router_id" "$config_file")
         local name=$(yq eval ".hypervisors[$i].name" "$config_file")
         
-        if [[ -n "${rid_map[$rid]}" ]]; then
+        if [[ -n "${rid_map[$rid]:-}" ]]; then
             log_error "Duplicate router ID $rid found: ${rid_map[$rid]} and $name"
             return 1
         fi
@@ -235,7 +235,7 @@ validate_router_ids() {
             local rid=$(yq eval ".switches.$tier[$i].router_id" "$config_file")
             local name=$(yq eval ".switches.$tier[$i].name" "$config_file")
             
-            if [[ "$rid" != "null" ]] && [[ -n "${rid_map[$rid]}" ]]; then
+            if [[ "$rid" != "null" ]] && [[ -n "${rid_map[$rid]:-}" ]]; then
                 log_error "Duplicate router ID $rid found: ${rid_map[$rid]} and $name"
                 return 1
             fi
