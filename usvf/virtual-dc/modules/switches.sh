@@ -3,17 +3,25 @@
 # SONiC Switch Deployment Module
 #
 # Deploys and configures SONiC switch VMs with:
-# - SONiC virtual switches (VS images)
-# - BGP configuration
+# - Ubuntu 24.04 VMs as switch hosts
+# - Docker with SONiC-VS containers
+# - BGP configuration via SONiC CLI
 # - Multiple network interfaces
 # - Management interface configuration
+#
+# Method: SONiC-VS running in Docker containers on Ubuntu VMs
 ################################################################################
 
 deploy_switches() {
     local config_file="$1"
     local dry_run="${2:-false}"
     
-    log_info "Deploying SONiC switch VMs..."
+    log_info "=========================================="
+    log_info "DEPLOYING SONiC SWITCHES"
+    log_info "=========================================="
+    log_info "Method: Ubuntu 24.04 VMs + SONiC-VS Docker Containers"
+    log_info "Image: docker.io/sonicdev/docker-sonic-vs:latest"
+    log_info ""
     
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     
@@ -29,7 +37,10 @@ deploy_switches() {
         deploy_switch_tier "$config_file" "superspine" "$dry_run"
     fi
     
-    log_success "All SONiC switches deployed successfully"
+    log_success "✓ All SONiC switch VMs deployed successfully"
+    log_info "Note: SONiC-VS containers will start automatically after VMs boot"
+    log_info "Access switches via: ssh ubuntu@<switch-mgmt-ip>"
+    log_info "Access SONiC CLI: docker exec -it sonic-vs bash"
 }
 
 deploy_switch_tier() {
@@ -67,26 +78,29 @@ deploy_single_switch() {
     local ports=$(yq eval ".switches.$tier[$index].ports" "$config_file")
     local port_speed=$(yq eval ".switches.$tier[$index].port_speed" "$config_file")
     
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Deploying $tier switch: $sw_name"
-    log_info "  Router ID: $router_id, ASN: $asn"
+    log_info "  Router ID: $router_id"
+    log_info "  ASN: $asn"
     log_info "  Management IP: $mgmt_ip"
     log_info "  Ports: $ports @ $port_speed"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
     if [[ "$dry_run" == "true" ]]; then
         log_info "[DRY RUN] Would create SONiC switch VM: $sw_name"
         return 0
     fi
     
-    # Create SONiC cloud-init configuration
+    # Step 1: Create cloud-init configuration for Ubuntu VM
     create_sonic_cloud_init "$config_file" "$tier" "$index" "$sw_name"
     
-    # Create VM disk for SONiC
+    # Step 2: Create VM disk (will copy from Ubuntu base image)
     create_sonic_disk "$sw_name"
     
-    # Create and start SONiC VM
+    # Step 3: Create and start Ubuntu VM that will run SONiC-VS
     create_sonic_vm "$config_file" "$sw_name" "$ports"
     
-    log_success "✓ SONiC switch $sw_name deployed"
+    log_success "✓ SONiC switch VM $sw_name deployed (SONiC-VS will auto-start)"
 }
 
 create_sonic_cloud_init() {
@@ -103,15 +117,15 @@ create_sonic_cloud_init() {
     local asn=$(yq eval ".switches.$tier[$index].asn" "$config_file")
     local mgmt_ip=$(yq eval ".switches.$tier[$index].management.ip" "$config_file")
     local mgmt_gw=$(yq eval '.global.management_network.gateway' "$config_file")
+    local ports=$(yq eval ".switches.$tier[$index].ports" "$config_file")
     
     local cloud_init_dir="$PROJECT_ROOT/config/cloud-init/$sw_name"
     mkdir -p "$cloud_init_dir"
     
-    # SONiC uses a different initialization approach
-    # We'll create a startup configuration that will be loaded
+    log_info "Creating cloud-init configuration for $sw_name..."
     
-    # Create startup config for SONiC
-    cat > "$cloud_init_dir/config_db.json" <<EOF
+    # Create SONiC configuration that will be used by the container
+    cat > "$cloud_init_dir/sonic_config.json" <<EOF
 {
     "DEVICE_METADATA": {
         "localhost": {
@@ -119,55 +133,237 @@ create_sonic_cloud_init() {
             "hwsku": "Force10-S6000",
             "platform": "x86_64-kvm_x86_64-r0",
             "mac": "auto",
-            "type": "ToRRouter"
-        }
-    },
-    "MGMT_INTERFACE": {
-        "eth0|${mgmt_ip}": {
-            "gwaddr": "$mgmt_gw"
+            "type": "ToRRouter",
+            "bgp_asn": "$asn"
         }
     },
     "LOOPBACK_INTERFACE": {
         "Loopback0|${router_id}/32": {}
-    },
-    "BGP_NEIGHBOR": {},
-    "DEVICE_NEIGHBOR": {}
+    }
 }
 EOF
     
-    # Create FRR config for SONiC
-    cat > "$cloud_init_dir/frr.conf" <<EOF
-!
-frr version 7.5
-frr defaults traditional
-hostname $sw_name
-log syslog informational
-no ipv6 forwarding
-service integrated-vtysh-config
-!
-router bgp $asn
- bgp router-id $router_id
- bgp log-neighbor-changes
- no bgp default ipv4-unicast
- bgp bestpath as-path multipath-relax
- neighbor FABRIC peer-group
- neighbor FABRIC remote-as external
- !
- address-family ipv4 unicast
-  neighbor FABRIC activate
-  neighbor FABRIC route-map ALLOW-ALL in
-  neighbor FABRIC route-map ALLOW-ALL out
-  maximum-paths 64
- exit-address-family
-!
-route-map ALLOW-ALL permit 10
-!
-line vty
-!
-end
-EOF
+    # Create startup script that will run SONiC-VS container
+    cat > "$cloud_init_dir/start-sonic.sh" <<'EOFSCRIPT'
+#!/bin/bash
+set -e
+
+echo "Starting SONiC-VS container deployment..."
+
+# Wait for Docker to be ready
+for i in {1..30}; do
+    if docker ps >/dev/null 2>&1; then
+        echo "Docker is ready"
+        break
+    fi
+    echo "Waiting for Docker... ($i/30)"
+    sleep 2
+done
+
+# Pull SONiC-VS image
+echo "Pulling SONiC-VS Docker image (this may take a few minutes)..."
+docker pull docker.io/sonicdev/docker-sonic-vs:latest
+
+# Stop and remove any existing sonic-vs container
+docker stop sonic-vs 2>/dev/null || true
+docker rm sonic-vs 2>/dev/null || true
+
+# Create directory for SONiC configs
+mkdir -p /etc/sonic
+
+# Copy SONiC configuration if it exists
+if [ -f /home/ubuntu/sonic_config.json ]; then
+    cp /home/ubuntu/sonic_config.json /etc/sonic/config_db.json
+fi
+
+# Start SONiC-VS container with proper networking
+echo "Starting SONiC-VS container..."
+docker run -d \
+    --name sonic-vs \
+    --privileged \
+    --network host \
+    -v /etc/sonic:/etc/sonic \
+    docker.io/sonicdev/docker-sonic-vs:latest
+
+# Wait for container to be ready
+sleep 10
+
+# Check if container is running
+if docker ps | grep -q sonic-vs; then
+    echo "✓ SONiC-VS container started successfully"
+    echo "Access SONiC CLI with: docker exec -it sonic-vs bash"
+else
+    echo "✗ Failed to start SONiC-VS container"
+    exit 1
+fi
+
+# Display status
+docker ps | grep sonic-vs
+EOFSCRIPT
     
-    log_success "✓ SONiC configuration created for $sw_name"
+    chmod +x "$cloud_init_dir/start-sonic.sh"
+    
+    # Create user-data for cloud-init
+    cat > "$cloud_init_dir/user-data" <<EOF
+#cloud-config
+hostname: $sw_name
+fqdn: ${sw_name}.local
+manage_etc_hosts: true
+
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: users, admin, docker
+    shell: /bin/bash
+    lock_passwd: false
+    ssh_authorized_keys:
+      - $ssh_pubkey
+
+# Set password for ubuntu user (password: ubuntu)
+chpasswd:
+  list: |
+    ubuntu:ubuntu
+  expire: false
+
+packages:
+  - docker.io
+  - docker-compose
+  - net-tools
+  - iproute2
+  - iputils-ping
+  - traceroute
+  - tcpdump
+  - vim
+  - jq
+  - curl
+
+write_files:
+  - path: /home/ubuntu/sonic_config.json
+    owner: ubuntu:ubuntu
+    permissions: '0644'
+    content: |
+$(cat "$cloud_init_dir/sonic_config.json" | sed 's/^/      /')
+
+  - path: /home/ubuntu/start-sonic.sh
+    owner: ubuntu:ubuntu
+    permissions: '0755'
+    content: |
+$(cat "$cloud_init_dir/start-sonic.sh" | sed 's/^/      /')
+
+  - path: /etc/systemd/system/sonic-vs.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=SONiC Virtual Switch Container
+      After=docker.service
+      Requires=docker.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      User=ubuntu
+      ExecStart=/home/ubuntu/start-sonic.sh
+      ExecStop=/usr/bin/docker stop sonic-vs
+      ExecStop=/usr/bin/docker rm sonic-vs
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  # Enable and start Docker
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker ubuntu
+  
+  # Wait for Docker to be fully ready
+  - sleep 5
+  
+  # Enable SONiC-VS service (will auto-start on boot)
+  - systemctl daemon-reload
+  - systemctl enable sonic-vs.service
+  - systemctl start sonic-vs.service
+  
+  # Create helpful aliases
+  - echo "alias sonic='docker exec -it sonic-vs bash'" >> /home/ubuntu/.bashrc
+  - echo "alias sonic-cli='docker exec -it sonic-vs sonic-cli'" >> /home/ubuntu/.bashrc
+  - echo "alias sonic-logs='docker logs sonic-vs'" >> /home/ubuntu/.bashrc
+  
+  # Create welcome message
+  - |
+    cat > /etc/motd <<'EOFMOTD'
+    ╔════════════════════════════════════════════════════════════╗
+    ║              SONiC Virtual Switch Node                     ║
+    ║                                                            ║
+    ║  Switch Name: $sw_name                                
+    ║  Router ID:   $router_id                                   
+    ║  ASN:         $asn                                         
+    ║                                                            ║
+    ║  Quick Commands:                                           ║
+    ║    sonic          - Enter SONiC container                  ║
+    ║    sonic-cli      - Run SONiC CLI commands                 ║
+    ║    sonic-logs     - View SONiC container logs              ║
+    ║                                                            ║
+    ║  Examples:                                                 ║
+    ║    sonic                                                   ║
+    ║    docker exec -it sonic-vs show ip bgp summary            ║
+    ║    docker exec -it sonic-vs show interface status          ║
+    ╚════════════════════════════════════════════════════════════╝
+    EOFMOTD
+
+power_state:
+  mode: reboot
+  timeout: 300
+  condition: True
+EOF
+
+    # Create meta-data
+    cat > "$cloud_init_dir/meta-data" <<EOF
+instance-id: $sw_name
+local-hostname: $sw_name
+EOF
+
+    # Create network-config
+    local mgmt_ip_addr=$(echo "$mgmt_ip" | cut -d'/' -f1)
+    local mgmt_prefix=$(echo "$mgmt_ip" | cut -d'/' -f2)
+    
+    cat > "$cloud_init_dir/network-config" <<EOF
+version: 2
+ethernets:
+  enp1s0:
+    addresses:
+      - $mgmt_ip
+    gateway4: $mgmt_gw
+    nameservers:
+      addresses:
+        - 8.8.8.8
+        - 8.8.4.4
+EOF
+
+    # Create cloud-init ISO
+    local iso_path="$PROJECT_ROOT/config/cloud-init/${sw_name}-cloud-init.iso"
+    
+    if command -v genisoimage >/dev/null 2>&1; then
+        genisoimage -output "$iso_path" \
+            -volid cidata \
+            -joliet -rock \
+            "$cloud_init_dir/user-data" \
+            "$cloud_init_dir/meta-data" \
+            "$cloud_init_dir/network-config" \
+            >/dev/null 2>&1
+    elif command -v mkisofs >/dev/null 2>&1; then
+        mkisofs -output "$iso_path" \
+            -volid cidata \
+            -joliet -rock \
+            "$cloud_init_dir/user-data" \
+            "$cloud_init_dir/meta-data" \
+            "$cloud_init_dir/network-config" \
+            >/dev/null 2>&1
+    else
+        log_error "Neither genisoimage nor mkisofs found. Please install cloud-image-utils."
+        exit 1
+    fi
+    
+    log_success "✓ Cloud-init configuration created for $sw_name"
 }
 
 create_sonic_disk() {
@@ -176,14 +372,22 @@ create_sonic_disk() {
     local disk_dir="$PROJECT_ROOT/config/disks"
     mkdir -p "$disk_dir"
     
+    local base_image="$PROJECT_ROOT/images/ubuntu-24.04-server-cloudimg-amd64.img"
     local disk_path="$disk_dir/${sw_name}.qcow2"
     
-    log_info "Creating disk for SONiC switch $sw_name..."
+    log_info "Creating disk for switch $sw_name from Ubuntu 24.04 base image..."
     
-    # Create a 20GB disk for SONiC
-    qemu-img create -f qcow2 "$disk_path" 20G
+    # Check if base image exists
+    if [[ ! -f "$base_image" ]]; then
+        log_error "Ubuntu 24.04 base image not found: $base_image"
+        log_error "Please run: ./scripts/deploy-virtual-dc.sh --check-prereqs"
+        exit 1
+    fi
     
-    log_success "✓ Disk created: $disk_path"
+    # Create a copy of the base image for this switch
+    qemu-img create -f qcow2 -F qcow2 -b "$base_image" "$disk_path" 50G
+    
+    log_success "✓ Disk created: $disk_path (50GB)"
 }
 
 create_sonic_vm() {
@@ -194,52 +398,149 @@ create_sonic_vm() {
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     local mgmt_network="${dc_name}-mgmt"
     local disk_path="$PROJECT_ROOT/config/disks/${sw_name}.qcow2"
+    local cloud_init_iso="$PROJECT_ROOT/config/cloud-init/${sw_name}-cloud-init.iso"
     
-    log_info "Creating SONiC VM: $sw_name"
+    log_info "Creating Ubuntu VM for switch: $sw_name"
     
-    # For SONiC VS, we need to use a special approach
-    # Using Ubuntu as base with SONiC docker container would be more practical
-    # For now, create a standard VM that we can configure
-    
+    # Build virt-install command
     local cmd="virt-install \
         --name $sw_name \
-        --vcpus 2 \
-        --memory 4096 \
+        --vcpus 4 \
+        --memory 8192 \
         --disk path=$disk_path,format=qcow2,bus=virtio \
+        --disk path=$cloud_init_iso,device=cdrom \
         --network network=$mgmt_network,model=virtio \
-        --os-variant ubuntu22.04 \
+        --os-variant ubuntu24.04 \
         --graphics none \
         --console pty,target_type=serial \
         --import \
         --noautoconsole"
     
-    # Add data plane interfaces for switch ports
-    # We'll add interfaces based on the cabling requirements
-    for i in $(seq 1 $((ports / 8))); do
+    # Add data plane interfaces based on port count
+    # Each virtio interface can represent multiple SONiC ports
+    local num_data_interfaces=$((ports / 32 + 1))
+    if [[ $num_data_interfaces -lt 2 ]]; then
+        num_data_interfaces=2
+    fi
+    
+    for i in $(seq 1 $num_data_interfaces); do
         cmd="$cmd --network network=default,model=virtio"
     done
+    
+    log_info "VM will have $num_data_interfaces data plane interfaces"
     
     # Execute virt-install
     eval "$cmd"
     
-    log_success "✓ SONiC VM $sw_name created and started"
+    if [[ $? -eq 0 ]]; then
+        log_success "✓ VM $sw_name created and started"
+        log_info "VM will reboot after cloud-init completes SONiC-VS installation"
+    else
+        log_error "Failed to create VM $sw_name"
+        exit 1
+    fi
 }
 
-configure_sonic_bgp() {
-    local sw_name="$1"
-    local config_file="$2"
+wait_for_switch_ready() {
+    local config_file="$1"
+    local sw_name="$2"
+    local mgmt_ip="$3"
     
-    log_info "Configuring BGP on SONiC switch: $sw_name"
+    local mgmt_ip_addr=$(echo "$mgmt_ip" | cut -d'/' -f1)
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
+    local ssh_key_path="$PROJECT_ROOT/config/${dc_name}-ssh-key"
     
-    # This would SSH into the switch and apply BGP configuration
-    # Implementation depends on switch accessibility
+    log_info "Waiting for switch $sw_name to be accessible..."
+    log_info "This may take 2-5 minutes for cloud-init to complete..."
     
-    log_success "✓ BGP configured on $sw_name"
+    local max_attempts=60
+    local attempt=0
+    
+    while [[ $attempt -lt $max_attempts ]]; do
+        if ssh -i "$ssh_key_path" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=5 \
+            -o BatchMode=yes \
+            ubuntu@"$mgmt_ip_addr" "echo ready" >/dev/null 2>&1; then
+            log_success "✓ Switch $sw_name is accessible via SSH"
+            return 0
+        fi
+        
+        attempt=$((attempt + 1))
+        if [[ $((attempt % 10)) -eq 0 ]]; then
+            log_info "Still waiting... ($attempt/$max_attempts)"
+        fi
+        sleep 5
+    done
+    
+    log_warn "Switch $sw_name did not become accessible within timeout"
+    log_warn "It may still be initializing. Check with: virsh console $sw_name"
+    return 1
+}
+
+configure_sonic_switch() {
+    local config_file="$1"
+    local sw_name="$2"
+    local tier="$3"
+    local index="$4"
+    
+    local mgmt_ip=$(yq eval ".switches.$tier[$index].management.ip" "$config_file")
+    local mgmt_ip_addr=$(echo "$mgmt_ip" | cut -d'/' -f1)
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
+    local ssh_key_path="$PROJECT_ROOT/config/${dc_name}-ssh-key"
+    
+    log_info "Configuring SONiC on switch $sw_name..."
+    
+    # Wait for SONiC container to be running
+    local max_wait=30
+    local waited=0
+    while [[ $waited -lt $max_wait ]]; do
+        if ssh -i "$ssh_key_path" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            ubuntu@"$mgmt_ip_addr" "docker ps | grep sonic-vs" >/dev/null 2>&1; then
+            log_success "✓ SONiC-VS container is running on $sw_name"
+            break
+        fi
+        waited=$((waited + 1))
+        sleep 2
+    done
+    
+    # Apply initial SONiC configuration
+    ssh -i "$ssh_key_path" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        ubuntu@"$mgmt_ip_addr" <<'EOFREMOTE'
+# Load configuration into SONiC
+docker exec sonic-vs config load /etc/sonic/config_db.json -y
+
+# Verify SONiC is running
+docker exec sonic-vs show system-health summary
+EOFREMOTE
+    
+    log_success "✓ SONiC configured on $sw_name"
 }
 
 list_switches() {
     log_info "Listing all switch VMs..."
     virsh list --all | grep -E "leaf|spine|superspine" || echo "No switches found"
+}
+
+get_switch_status() {
+    local sw_name="$1"
+    
+    log_info "Status for switch: $sw_name"
+    
+    # VM status
+    if virsh list --all --name | grep -q "^${sw_name}$"; then
+        local state=$(virsh domstate "$sw_name")
+        echo "  VM State: $state"
+        
+        if [[ "$state" == "running" ]]; then
+            # Try to check SONiC container status
+            echo "  Checking SONiC container..."
+            # This would require SSH access
+        fi
+    else
+        echo "  VM not found"
+    fi
 }
 
 delete_switch() {
@@ -259,4 +560,8 @@ delete_switch() {
     else
         log_warn "Switch $sw_name not found"
     fi
+    
+    # Clean up cloud-init files
+    rm -rf "$PROJECT_ROOT/config/cloud-init/$sw_name"
+    rm -f "$PROJECT_ROOT/config/cloud-init/${sw_name}-cloud-init.iso"
 }

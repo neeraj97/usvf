@@ -6,8 +6,8 @@ A comprehensive toolkit for deploying and managing virtual datacenter environmen
 
 This system allows you to design and deploy a complete virtual datacenter infrastructure including:
 
-- **Hypervisors**: KVM-based VMs running as compute nodes with FRRouting for BGP
-- **SONiC Switches**: Virtual switches organized in Leaf/Spine/SuperSpine architecture
+- **Hypervisors**: KVM-based VMs running Ubuntu 24.04 as compute nodes with FRRouting for BGP
+- **SONiC Switches**: SONiC-VS containers running on Ubuntu VMs, organized in Leaf/Spine/SuperSpine architecture
 - **BGP Unnumbered**: Layer 3 fabric using BGP unnumbered for simplified configuration
 - **Management Network**: Dedicated L2 network for out-of-band management
 - **Visual Topology Design**: ASCII art-based topology visualization in YAML config
@@ -29,6 +29,8 @@ This system allows you to design and deploy a complete virtual datacenter infras
 ✅ **KVM/QEMU Support** - Uses industry-standard virtualization
 
 ✅ **FRRouting Integration** - Full BGP routing stack on hypervisors
+
+✅ **SONiC-VS Deployment** - SONiC switches via Docker containers (see [SONiC Documentation](docs/SONIC_DEPLOYMENT.md))
 
 ## Architecture
 
@@ -181,6 +183,8 @@ Key sections to customize:
 
 ### 4. Access Your Infrastructure
 
+#### Access Hypervisors
+
 ```bash
 # List all VMs
 virsh list --all
@@ -188,10 +192,28 @@ virsh list --all
 # SSH into hypervisor
 ssh -i config/virtual-dc-lab-ssh-key ubuntu@192.168.100.11
 
-# Check BGP status
+# Check BGP status on hypervisor
 ssh -i config/virtual-dc-lab-ssh-key ubuntu@192.168.100.11 \
     "sudo vtysh -c 'show bgp summary'"
 ```
+
+#### Access SONiC Switches
+
+```bash
+# SSH to switch VM
+ssh -i config/virtual-dc-lab-ssh-key ubuntu@192.168.100.101
+
+# Enter SONiC container
+docker exec -it sonic-vs bash
+
+# Or use the alias
+sonic
+
+# Check SONiC BGP status
+docker exec -it sonic-vs show ip bgp summary
+```
+
+For detailed SONiC switch documentation, see [docs/SONIC_DEPLOYMENT.md](docs/SONIC_DEPLOYMENT.md).
 
 ## Topology Design Methods
 
