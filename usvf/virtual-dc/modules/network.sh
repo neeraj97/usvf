@@ -21,11 +21,12 @@ get_management_network_config() {
     # Extract gateway and subnet from network XML
     local xml_output=$(virsh net-dumpxml "$network_name" 2>/dev/null)
 
-    # Extract gateway IP (the 'address' attribute in <ip> tag)
-    local gateway=$(echo "$xml_output" | grep -oP "address='\K[^']+")
+    # Extract gateway IP from <ip> tag (NOT from <mac> tag)
+    # Look for: <ip address='192.168.10.1' netmask='255.255.255.0'>
+    local gateway=$(echo "$xml_output" | grep '<ip address=' | grep -oP "address=['\"]\\K[0-9.]+")
 
-    # Extract netmask and convert to CIDR prefix
-    local netmask=$(echo "$xml_output" | grep -oP "netmask='\K[^']+")
+    # Extract netmask from <ip> tag
+    local netmask=$(echo "$xml_output" | grep '<ip address=' | grep -oP "netmask=['\"]\\K[0-9.]+")
 
     # Convert netmask to CIDR prefix (e.g., 255.255.255.0 -> 24)
     local prefix=""
