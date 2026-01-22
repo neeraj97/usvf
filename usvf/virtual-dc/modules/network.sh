@@ -8,23 +8,75 @@
 # - Network connectivity between VMs
 ################################################################################
 
+get_management_network_config() {
+    local dc_name="$1"
+    local network_name="${dc_name}-mgmt"
+
+    # Check if management network exists
+    if ! virsh net-list --all 2>/dev/null | grep -q "$network_name"; then
+        log_error "Management network $network_name does not exist"
+        return 1
+    fi
+
+    # Extract gateway and subnet from network XML
+    local xml_output=$(virsh net-dumpxml "$network_name" 2>/dev/null)
+
+    # Extract gateway IP (the 'address' attribute in <ip> tag)
+    local gateway=$(echo "$xml_output" | grep -oP "address='\K[^']+")
+
+    # Extract netmask and convert to CIDR prefix
+    local netmask=$(echo "$xml_output" | grep -oP "netmask='\K[^']+")
+
+    # Convert netmask to CIDR prefix (e.g., 255.255.255.0 -> 24)
+    local prefix=""
+    case "$netmask" in
+        255.255.255.0) prefix="24" ;;
+        255.255.0.0) prefix="16" ;;
+        255.0.0.0) prefix="8" ;;
+        *) prefix="24" ;;  # Default to /24
+    esac
+
+    # Build subnet from gateway IP
+    local network_base=$(echo "$gateway" | sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+$/\1/')
+    local subnet="${network_base}.0/${prefix}"
+
+    # Output as space-separated values: subnet gateway
+    echo "$subnet $gateway"
+}
+
 create_management_network() {
     local config_file="$1"
     local dry_run="${2:-false}"
-    
+
     log_info "Creating management network infrastructure..."
-    
-    # Get management network configuration
+
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
+    local network_name="${dc_name}-mgmt"
+
+    # Check if management network already exists
+    if virsh net-list --all 2>/dev/null | grep -q "$network_name"; then
+        log_info "Management network $network_name already exists, skipping creation"
+        return 0
+    fi
+
+    # Get management network configuration from topology.yaml
+    # Note: vdc-manager.sh should populate these values before deployment
     local mgmt_subnet=$(yq eval '.global.management_network.subnet' "$config_file")
     local mgmt_gateway=$(yq eval '.global.management_network.gateway' "$config_file")
-    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
-    
+
+    # Validate that values exist (should be set by vdc-manager)
+    if [[ -z "$mgmt_subnet" || "$mgmt_subnet" == "null" ]]; then
+        log_error "Management network subnet not configured in topology.yaml"
+        log_error "Please use vdc-manager.sh to create and manage virtual datacenters"
+        return 1
+    fi
+
     log_info "Management subnet: $mgmt_subnet"
     log_info "Management gateway: $mgmt_gateway"
-    
+
     # Create libvirt network
     create_libvirt_mgmt_network "$dc_name" "$mgmt_subnet" "$mgmt_gateway" "$dry_run"
-    
+
     log_success "Management network created successfully"
 }
 

@@ -39,9 +39,15 @@ topology_visual: |
 global:
   datacenter_name: "virtual-dc-lab"
   virtualization_platform: "kvm"  # kvm, virtualbox, vmware
+
+  # Management network configuration
+  # NOTE: When using vdc-manager.sh, the management network subnet and gateway
+  # are automatically assigned and configured. The vdc-manager will update these
+  # values in this file. Manual configuration is only needed if deploying without
+  # vdc-manager.
   management_network:
-    subnet: "192.168.100.0/24"
-    gateway: "192.168.100.1"
+    subnet: "192.168.100.0/24"  # Auto-assigned by vdc-manager (192.168.10.x, 192.168.11.x, etc.)
+    gateway: "192.168.100.1"    # Auto-assigned by vdc-manager (.1 of subnet)
     dns: ["8.8.8.8", "8.8.4.4"]
   
   # Default BGP settings

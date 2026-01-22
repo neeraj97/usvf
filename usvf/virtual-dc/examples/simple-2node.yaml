@@ -10,10 +10,12 @@
 global:
   datacenter_name: "simple-lab"
   virtualization_platform: "kvm"
-  
+
+  # Management network configuration
+  # NOTE: When using vdc-manager.sh, these values are auto-assigned
   management_network:
-    subnet: "192.168.100.0/24"
-    gateway: "192.168.100.1"
+    subnet: "192.168.100.0/24"  # Auto-assigned by vdc-manager
+    gateway: "192.168.100.1"    # Auto-assigned by vdc-manager
     description: "Out-of-band management network (L2)"
   
   kvm_settings:

@@ -114,16 +114,24 @@ create_sonic_cloud_init() {
     local index="$3"
     local sw_name="$4"
     local full_vm_name="$5"
-    
+
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     local ssh_key_path=$(get_vdc_ssh_public_key "$dc_name")
     local ssh_pubkey=$(cat "$ssh_key_path")
-    
+
     local router_id=$(yq eval ".switches.$tier[$index].router_id" "$config_file")
     local asn=$(yq eval ".switches.$tier[$index].asn" "$config_file")
     local mgmt_ip=$(yq eval ".switches.$tier[$index].management.ip" "$config_file")
-    local mgmt_gw=$(yq eval '.global.management_network.gateway' "$config_file")
     local ports=$(yq eval ".switches.$tier[$index].ports" "$config_file")
+
+    # Detect management network configuration from existing network
+    local mgmt_config=$(get_management_network_config "$dc_name")
+    if [[ $? -ne 0 ]]; then
+        log_error "Failed to detect management network configuration"
+        return 1
+    fi
+    local mgmt_subnet=$(echo "$mgmt_config" | awk '{print $1}')
+    local mgmt_gw=$(echo "$mgmt_config" | awk '{print $2}')
     
     local cloud_init_dir=$(get_vdc_cloud_init_vm_dir "$dc_name" "$full_vm_name")
     mkdir -p "$cloud_init_dir"
