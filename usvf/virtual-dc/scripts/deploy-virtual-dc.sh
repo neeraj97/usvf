@@ -86,7 +86,7 @@ Steps:
     hypervisors - Deploy hypervisor VMs
     switches    - Deploy SONiC switch VMs
     cabling     - Configure virtual cabling
-    bgp         - Configure BGP on all devices
+    wait-ssh    - Wait for all VMs to be SSH-accessible
     verify      - Verify the deployment
     all         - Run all steps (default)
 
@@ -279,12 +279,115 @@ for module in "$MODULES_DIR"/*.sh; do
 done
 echo
 
+# Wait for all VMs to be SSH accessible
+wait_for_all_vms() {
+    local config_file="$1"
+
+    log_info "Waiting for all VMs to be SSH-accessible (cloud-init in progress)..."
+
+    # Get datacenter name
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
+
+    # Get SSH key path using VDC helper function
+    local ssh_key_path=$(get_vdc_ssh_private_key "$dc_name")
+    if [[ ! -f "$ssh_key_path" ]]; then
+        log_warn "SSH key not found at $ssh_key_path, skipping SSH check"
+        return 0
+    fi
+
+    local all_ready=true
+
+    # Wait for hypervisors - read IP from topology
+    local hv_count=$(yq eval '.hypervisors | length' "$config_file")
+    for i in $(seq 0 $((hv_count - 1))); do
+        local hv_name=$(yq eval ".hypervisors[$i].name" "$config_file")
+        local vm_name="${dc_name}-${hv_name}"
+        local mgmt_ip=$(yq eval ".hypervisors[$i].management.ip" "$config_file" | cut -d'/' -f1)
+
+        if [[ -z "$mgmt_ip" || "$mgmt_ip" == "null" ]]; then
+            log_warn "No management IP configured for $vm_name, skipping"
+            continue
+        fi
+
+        log_info "Checking $vm_name at $mgmt_ip..."
+        if ! wait_for_vm "$mgmt_ip" "$ssh_key_path"; then
+            log_warn "Failed to connect to $vm_name at $mgmt_ip"
+            all_ready=false
+        fi
+    done
+
+    # Wait for leaf switches - read IP from topology
+    local leaf_count=$(yq eval '.switches.leaf | length' "$config_file")
+    for i in $(seq 0 $((leaf_count - 1))); do
+        local leaf_name=$(yq eval ".switches.leaf[$i].name" "$config_file")
+        local vm_name="${dc_name}-${leaf_name}"
+        local mgmt_ip=$(yq eval ".switches.leaf[$i].management.ip" "$config_file" | cut -d'/' -f1)
+
+        if [[ -z "$mgmt_ip" || "$mgmt_ip" == "null" ]]; then
+            log_warn "No management IP configured for $vm_name, skipping"
+            continue
+        fi
+
+        log_info "Checking $vm_name at $mgmt_ip..."
+        if ! wait_for_vm "$mgmt_ip" "$ssh_key_path"; then
+            log_warn "Failed to connect to $vm_name at $mgmt_ip"
+            all_ready=false
+        fi
+    done
+
+    # Wait for spine switches - read IP from topology
+    local spine_count=$(yq eval '.switches.spine | length' "$config_file")
+    for i in $(seq 0 $((spine_count - 1))); do
+        local spine_name=$(yq eval ".switches.spine[$i].name" "$config_file")
+        local vm_name="${dc_name}-${spine_name}"
+        local mgmt_ip=$(yq eval ".switches.spine[$i].management.ip" "$config_file" | cut -d'/' -f1)
+
+        if [[ -z "$mgmt_ip" || "$mgmt_ip" == "null" ]]; then
+            log_warn "No management IP configured for $vm_name, skipping"
+            continue
+        fi
+
+        log_info "Checking $vm_name at $mgmt_ip..."
+        if ! wait_for_vm "$mgmt_ip" "$ssh_key_path"; then
+            log_warn "Failed to connect to $vm_name at $mgmt_ip"
+            all_ready=false
+        fi
+    done
+
+    # Wait for superspine switches - read IP from topology
+    local superspine_count=$(yq eval '.switches.superspine | length' "$config_file")
+    for i in $(seq 0 $((superspine_count - 1))); do
+        local superspine_name=$(yq eval ".switches.superspine[$i].name" "$config_file")
+        local vm_name="${dc_name}-${superspine_name}"
+        local mgmt_ip=$(yq eval ".switches.superspine[$i].management.ip" "$config_file" | cut -d'/' -f1)
+
+        if [[ -z "$mgmt_ip" || "$mgmt_ip" == "null" ]]; then
+            log_warn "No management IP configured for $vm_name, skipping"
+            continue
+        fi
+
+        log_info "Checking $vm_name at $mgmt_ip..."
+        if ! wait_for_vm "$mgmt_ip" "$ssh_key_path"; then
+            log_warn "Failed to connect to $vm_name at $mgmt_ip"
+            all_ready=false
+        fi
+    done
+
+    if [[ "$all_ready" == "true" ]]; then
+        log_success "All VMs are SSH-accessible and ready!"
+        return 0
+    else
+        log_warn "Some VMs were not reachable within timeout"
+        return 1
+    fi
+}
+
 # Main deployment flow
 main() {
     local steps_to_run=()
     
     if [[ "$STEP" == "all" ]]; then
-        steps_to_run=(validate prereqs network hypervisors switches cabling bgp verify)
+        steps_to_run=(validate prereqs network hypervisors switches cabling wait-ssh verify)
     else
         steps_to_run=("$STEP")
     fi
@@ -339,13 +442,13 @@ main() {
                 configure_cabling "$CONFIG_FILE" "$DRY_RUN"
                 log_success "Cabling configured"
                 ;;
-            bgp)
+            wait-ssh)
                 if [[ "$VALIDATE_ONLY" == "true" ]]; then
                     continue
                 fi
-                log_info "═══ Step 7: Configuring BGP ═══"
-                configure_bgp "$CONFIG_FILE" "$DRY_RUN"
-                log_success "BGP configured"
+                log_info "═══ Step 7: Waiting for VMs to be SSH-Accessible ═══"
+                wait_for_all_vms "$CONFIG_FILE"
+                log_success "All VMs are SSH-accessible and ready"
                 ;;
             verify)
                 if [[ "$VALIDATE_ONLY" == "true" ]]; then
@@ -370,8 +473,8 @@ main() {
         echo
         log_info "Next steps:"
         log_info "  1. Check VM status: virsh list --all"
-        log_info "  2. Access hypervisors via SSH: ssh -i <key> ubuntu@192.168.100.11"
-        log_info "  3. Verify BGP: ssh ubuntu@192.168.100.11 'vtysh -c \"show bgp summary\"'"
+        log_info "  2. Access hypervisors via SSH (IPs are auto-assigned, check with: virsh domifaddr <vm-name>)"
+        log_info "  3. Verify BGP (already configured via cloud-init): ssh ubuntu@<vm-ip> 'vtysh -c \"show bgp summary\"'"
         log_info "  4. View network topology: ./scripts/show-topology.sh"
     fi
 }

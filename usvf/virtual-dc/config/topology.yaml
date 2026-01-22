@@ -70,12 +70,12 @@ hypervisors:
     router_id: "1.1.1.1"
     asn: 65001
     management:
-      interface: "eth0"
+      interface: "enp1s0"  # First virtio NIC
       # IP is auto-assigned by vdc-manager (continuous allocation starting from .11)
     data_interfaces:
-      - name: "eth1"
+      - name: "enp2s0"  # Second virtio NIC
         description: "Connection to Leaf-1"
-      - name: "eth2"
+      - name: "enp3s0"  # Third virtio NIC
         description: "Connection to Leaf-2"
     resources:
       cpu: 1
@@ -87,11 +87,11 @@ hypervisors:
     router_id: "1.1.1.2"
     asn: 65002
     management:
-      interface: "eth0"
+      interface: "enp1s0"
     data_interfaces:
-      - name: "eth1"
+      - name: "enp2s0"
         description: "Connection to Leaf-1"
-      - name: "eth2"
+      - name: "enp3s0"
         description: "Connection to Leaf-2"
     resources:
       cpu: 1
@@ -103,11 +103,11 @@ hypervisors:
     router_id: "1.1.1.3"
     asn: 65003
     management:
-      interface: "eth0"
+      interface: "enp1s0"
     data_interfaces:
-      - name: "eth1"
+      - name: "enp2s0"
         description: "Connection to Leaf-2"
-      - name: "eth2"
+      - name: "enp3s0"
         description: "Connection to Leaf-3"
     resources:
       cpu: 1
@@ -119,11 +119,11 @@ hypervisors:
     router_id: "1.1.1.4"
     asn: 65004
     management:
-      interface: "eth0"
+      interface: "enp1s0"
     data_interfaces:
-      - name: "eth1"
+      - name: "enp2s0"
         description: "Connection to Leaf-2"
-      - name: "eth2"
+      - name: "enp3s0"
         description: "Connection to Leaf-3"
     resources:
       cpu: 1

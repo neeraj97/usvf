@@ -108,6 +108,9 @@ create_hypervisor_cloud_init() {
     local asn=$(yq eval ".hypervisors[$index].asn" "$config_file")
     local mgmt_ip=$(yq eval ".hypervisors[$index].management.ip" "$config_file")
 
+    # Get number of data interfaces for BGP neighbor configuration
+    local iface_count=$(yq eval ".hypervisors[$index].data_interfaces | length" "$config_file")
+
     # Detect management network configuration from existing network
     local mgmt_config=$(get_management_network_config "$dc_name")
     if [[ $? -ne 0 ]]; then
@@ -208,6 +211,19 @@ write_files:
        neighbor FABRIC remote-as external
        neighbor FABRIC capability extended-nexthop
        !
+EOF
+
+    # Add BGP neighbors for each data interface (enp2s0, enp3s0, etc.)
+    for i in $(seq 1 $iface_count); do
+        local iface_name="enp$((i+1))s0"
+        cat >> "$cloud_init_dir/user-data" <<EOF
+       ! BGP neighbor on $iface_name
+       neighbor $iface_name interface peer-group FABRIC
+       !
+EOF
+    done
+
+    cat >> "$cloud_init_dir/user-data" <<EOF
        address-family ipv4 unicast
         neighbor FABRIC activate
         neighbor FABRIC route-map ALLOW-ALL in
@@ -237,6 +253,17 @@ write_files:
 runcmd:
   - echo "Starting cloud-init setup for $hv_name..."
   - sysctl -p /etc/sysctl.d/99-forwarding.conf
+EOF
+
+    # Add commands to bring up data interfaces
+    for i in $(seq 1 $iface_count); do
+        local iface_name="enp$((i+1))s0"
+        cat >> "$cloud_init_dir/user-data" <<EOF
+  - ip link set $iface_name up
+EOF
+    done
+
+    cat >> "$cloud_init_dir/user-data" <<EOF
   - chown frr:frr /etc/frr/frr.conf
   - chmod 640 /etc/frr/frr.conf
   - systemctl enable frr
@@ -269,7 +296,7 @@ power_state:
 EOF
     
     # Create network-config
-    # Use match to find the first interface (management interface)
+    # Configure management interface (enp1s0) and data interfaces (enp2s0, enp3s0, etc.)
     cat > "$cloud_init_dir/network-config" <<EOF
 version: 2
 ethernets:
@@ -285,6 +312,18 @@ ethernets:
         - 8.8.8.8
         - 8.8.4.4
 EOF
+
+    # Add data plane interfaces with IPv6 link-local for BGP unnumbered
+    for i in $(seq 1 $iface_count); do
+        local iface_name="enp$((i+1))s0"
+        cat >> "$cloud_init_dir/network-config" <<EOF
+  $iface_name:
+    dhcp4: false
+    dhcp6: false
+    accept-ra: false
+    link-local: [ ipv6 ]
+EOF
+    done
     
     # Create cloud-init ISO
     local iso_path=$(get_vdc_cloud_init_iso "$dc_name" "$full_vm_name")
