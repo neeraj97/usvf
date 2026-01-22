@@ -23,13 +23,14 @@
 #   ./vdc-manager.sh cleanup-orphans --name prod
 ################################################################################
 
-set -euo pipefail
+set -xeuo pipefail
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Source required modules
+source "$PROJECT_ROOT/modules/vdc-paths.sh"
 source "$PROJECT_ROOT/modules/vdc.sh"
 source "$PROJECT_ROOT/modules/namespace.sh"
 
@@ -416,12 +417,9 @@ cmd_destroy() {
     local namespace="vdc-${vdc_name}"
     destroy_vdc_namespace "$namespace"
     
-    # Remove VDC directory
+    # Remove VDC directory (includes all disks, cloud-init, bgp configs, network XMLs, ssh keys)
     log_info "Step 3/4: Cleaning up VDC directory..."
-    local vdc_config_dir="$PROJECT_ROOT/config/vdc-${vdc_name}"
-    if [[ -d "$vdc_config_dir" ]]; then
-        rm -rf "$vdc_config_dir"
-    fi
+    cleanup_vdc_directory "$vdc_name"
     
     # Remove from registry
     log_info "Step 4/4: Unregistering VDC..."
