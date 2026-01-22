@@ -158,6 +158,7 @@ destroy_virtual_networks() {
         "${dc_name}-mgmt"
         "${dc_name}-data"
         "${dc_name}-fabric"
+        "${dc_name}-p2p-link-.*"
         "virtual-dc-.*"
     )
     

@@ -46,24 +46,26 @@ configure_single_cable() {
     fi
     
     # Create virtual network for this P2P link
-    create_p2p_network "$src_device" "$src_iface" "$dst_device" "$dst_iface" "$index"
+    create_p2p_network "$config_file" "$src_device" "$src_iface" "$dst_device" "$dst_iface" "$index"
     
     # Attach interfaces to VMs
-    attach_interface_to_vm "$src_device" "$src_iface" "$index"
-    attach_interface_to_vm "$dst_device" "$dst_iface" "$index"
+    attach_interface_to_vm "$config_file" "$src_device" "$src_iface" "$index"
+    attach_interface_to_vm "$config_file" "$dst_device" "$dst_iface" "$index"
     
     log_success "✓ Cable connection configured"
 }
 
 create_p2p_network() {
-    local src_device="$1"
-    local src_iface="$2"
-    local dst_device="$3"
-    local dst_iface="$4"
-    local link_id="$5"
+    local config_file="$1"
+    local src_device="$2"
+    local src_iface="$3"
+    local dst_device="$4"
+    local dst_iface="$5"
+    local link_id="$6"
     
-    local network_name="p2p-link-${link_id}"
-    local network_xml="$PROJECT_ROOT/config/${network_name}.xml"
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
+    local network_name="${dc_name}-p2p-link-${link_id}"
+    local network_xml=$(get_vdc_network_xml "$dc_name" "${network_name}")
     
     log_info "Creating P2P network: $network_name"
     
@@ -72,7 +74,7 @@ create_p2p_network() {
 <network>
   <name>$network_name</name>
   <forward mode='none'/>
-  <bridge name='virbr-p2p-${link_id}' stp='off' delay='0'/>
+  <bridge name='virbr-${dc_name}-p2p-${link_id}' stp='off' delay='0'/>
 </network>
 EOF
     
@@ -91,17 +93,20 @@ EOF
 }
 
 attach_interface_to_vm() {
-    local vm_name="$1"
-    local iface_name="$2"
-    local link_id="$3"
+    local config_file="$1"
+    local vm_name="$2"
+    local iface_name="$3"
+    local link_id="$4"
     
-    local network_name="p2p-link-${link_id}"
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
+    local network_name="${dc_name}-p2p-link-${link_id}"
+    local full_vm_name="${dc_name}-${vm_name}"
     
-    log_info "Attaching interface to $vm_name on network $network_name"
+    log_info "Attaching interface to $full_vm_name on network $network_name"
     
     # Check if VM exists
-    if ! virsh list --all --name | grep -q "^${vm_name}$"; then
-        log_warn "VM $vm_name not found, skipping interface attachment"
+    if ! virsh list --all --name | grep -q "^${full_vm_name}$"; then
+        log_warn "VM $full_vm_name not found, skipping interface attachment"
         return 1
     fi
     
@@ -109,14 +114,14 @@ attach_interface_to_vm() {
     # Note: The interface will appear as ethX in the VM
     # We'll need to configure it post-boot
     
-    virsh attach-interface "$vm_name" \
+    virsh attach-interface "$full_vm_name" \
         --type network \
         --source "$network_name" \
         --model virtio \
         --config \
         --persistent 2>/dev/null || log_warn "Could not attach interface (VM may need to be running)"
     
-    log_success "✓ Interface attached to $vm_name"
+    log_success "✓ Interface attached to $full_vm_name"
 }
 
 configure_interface_in_vm() {
@@ -143,12 +148,13 @@ verify_cabling() {
     
     log_info "Verifying cable connections..."
     
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     local cable_count=$(yq eval '.cabling | length' "$config_file")
     local verified=0
     local failed=0
     
     for i in $(seq 0 $((cable_count - 1))); do
-        local network_name="p2p-link-${i}"
+        local network_name="${dc_name}-p2p-link-${i}"
         
         if virsh net-list --all | grep -q "$network_name"; then
             verified=$((verified + 1))
@@ -174,15 +180,22 @@ cleanup_cabling() {
     
     log_info "Cleaning up cable connections..."
     
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     local cable_count=$(yq eval '.cabling | length' "$config_file")
     
     for i in $(seq 0 $((cable_count - 1))); do
-        local network_name="p2p-link-${i}"
+        local network_name="${dc_name}-p2p-link-${i}"
         
         if virsh net-list --all | grep -q "$network_name"; then
             virsh net-destroy "$network_name" 2>/dev/null || true
             virsh net-undefine "$network_name" 2>/dev/null || true
             log_info "✓ Removed $network_name"
+        fi
+        
+        # Remove network XML file
+        local network_xml=$(get_vdc_network_xml "$dc_name" "${network_name}")
+        if [[ -f "$network_xml" ]]; then
+            rm -f "$network_xml"
         fi
     done
     
