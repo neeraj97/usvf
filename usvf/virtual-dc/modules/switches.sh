@@ -336,9 +336,12 @@ EOF
 version: 2
 ethernets:
   enp1s0:
+    dhcp4: false
     addresses:
       - $mgmt_ip
-    gateway4: $mgmt_gw
+    routes:
+      - to: 0.0.0.0/0
+        via: $mgmt_gw
     nameservers:
       addresses:
         - 8.8.8.8

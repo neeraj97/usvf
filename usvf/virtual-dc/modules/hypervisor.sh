@@ -261,14 +261,17 @@ power_state:
 EOF
     
     # Create network-config
+    # Use match to find the first interface (management interface)
     cat > "$cloud_init_dir/network-config" <<EOF
 version: 2
 ethernets:
-  eth0:
+  enp1s0:
     dhcp4: false
     addresses:
       - $mgmt_ip
-    gateway4: $mgmt_gw
+    routes:
+      - to: 0.0.0.0/0
+        via: $mgmt_gw
     nameservers:
       addresses:
         - 8.8.8.8
