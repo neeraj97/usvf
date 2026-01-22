@@ -79,9 +79,9 @@ hypervisors:
       - name: "eth2"
         description: "Connection to Leaf-2"
     resources:
-      cpu: 4
-      memory: 4096
-      disk: 50
+      cpu: 1
+      memory: 1024
+      disk: 5
   
   - name: "hypervisor-2"
     short_name: "hv2"
@@ -96,9 +96,9 @@ hypervisors:
       - name: "eth2"
         description: "Connection to Leaf-2"
     resources:
-      cpu: 4
-      memory: 4096
-      disk: 50
+      cpu: 1
+      memory: 1024
+      disk: 5
   
   - name: "hypervisor-3"
     short_name: "hv3"
@@ -113,9 +113,9 @@ hypervisors:
       - name: "eth2"
         description: "Connection to Leaf-3"
     resources:
-      cpu: 4
-      memory: 4096
-      disk: 50
+      cpu: 1
+      memory: 1024
+      disk: 5
   
   - name: "hypervisor-4"
     short_name: "hv4"
@@ -130,9 +130,9 @@ hypervisors:
       - name: "eth2"
         description: "Connection to Leaf-3"
     resources:
-      cpu: 4
-      memory: 4096
-      disk: 50
+      cpu: 1
+      memory: 1024
+      disk: 5
 
 ################################################################################
 # SWITCHES DEFINITION

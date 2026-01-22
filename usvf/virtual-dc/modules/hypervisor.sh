@@ -38,6 +38,7 @@ deploy_single_hypervisor() {
     
     # Extract hypervisor configuration
     local hv_name=$(yq eval ".hypervisors[$index].name" "$config_file")
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     local short_name=$(yq eval ".hypervisors[$index].short_name" "$config_file")
     local router_id=$(yq eval ".hypervisors[$index].router_id" "$config_file")
     local asn=$(yq eval ".hypervisors[$index].asn" "$config_file")
@@ -46,30 +47,34 @@ deploy_single_hypervisor() {
     local memory=$(yq eval ".hypervisors[$index].resources.memory" "$config_file")
     local disk=$(yq eval ".hypervisors[$index].resources.disk" "$config_file")
     
+    # Create full VM name with DC prefix for proper isolation
+    local full_vm_name="${dc_name}-${hv_name}"
+    
     # Get number of data interfaces
     local iface_count=$(yq eval ".hypervisors[$index].data_interfaces | length" "$config_file")
     
-    log_info "Deploying hypervisor: $hv_name"
+    log_info "Deploying hypervisor: $full_vm_name"
+    log_info "  Hostname: $hv_name"
     log_info "  Router ID: $router_id, ASN: $asn"
     log_info "  Management IP: $mgmt_ip"
     log_info "  Resources: CPU=$cpu, Memory=${memory}MB, Disk=${disk}GB"
     log_info "  Data Interfaces: $iface_count"
     
     if [[ "$dry_run" == "true" ]]; then
-        log_info "[DRY RUN] Would create VM: $hv_name"
+        log_info "[DRY RUN] Would create VM: $full_vm_name"
         return 0
     fi
     
-    # Create cloud-init configuration
-    create_hypervisor_cloud_init "$config_file" "$index" "$hv_name"
+    # Create cloud-init configuration (use original hv_name for hostname)
+    create_hypervisor_cloud_init "$config_file" "$index" "$hv_name" "$full_vm_name"
     
-    # Create VM disk
-    create_hypervisor_disk "$config_file" "$hv_name" "$disk"
+    # Create VM disk (use full_vm_name for disk file)
+    create_hypervisor_disk "$config_file" "$full_vm_name" "$disk"
     
-    # Create and start VM
-    create_hypervisor_vm "$config_file" "$index" "$hv_name" "$cpu" "$memory" "$iface_count"
+    # Create and start VM (use full_vm_name for VM name)
+    create_hypervisor_vm "$config_file" "$index" "$full_vm_name" "$hv_name" "$cpu" "$memory" "$iface_count"
     
-    log_success "✓ Hypervisor $hv_name deployed"
+    log_success "✓ Hypervisor $full_vm_name deployed"
 }
 
 setup_ssh_keys() {
@@ -93,6 +98,7 @@ create_hypervisor_cloud_init() {
     local config_file="$1"
     local index="$2"
     local hv_name="$3"
+    local full_vm_name="$4"
     
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     local ssh_key_path=$(get_vdc_ssh_public_key "$dc_name")
@@ -103,7 +109,7 @@ create_hypervisor_cloud_init() {
     local mgmt_ip=$(yq eval ".hypervisors[$index].management.ip" "$config_file")
     local mgmt_gw=$(yq eval '.global.management_network.gateway' "$config_file")
     
-    local cloud_init_dir=$(get_vdc_cloud_init_vm_dir "$dc_name" "$hv_name")
+    local cloud_init_dir=$(get_vdc_cloud_init_vm_dir "$dc_name" "$full_vm_name")
     mkdir -p "$cloud_init_dir"
     
     # Create meta-data
@@ -270,7 +276,7 @@ ethernets:
 EOF
     
     # Create cloud-init ISO
-    local iso_path=$(get_vdc_cloud_init_iso "$dc_name" "$hv_name")
+    local iso_path=$(get_vdc_cloud_init_iso "$dc_name" "$full_vm_name")
     
     if command -v genisoimage &> /dev/null; then
         genisoimage -output "$iso_path" \
@@ -289,7 +295,7 @@ EOF
         return 1
     fi
     
-    log_success "✓ Cloud-init configuration created for $hv_name"
+    log_success "✓ Cloud-init configuration created for $full_vm_name"
 }
 
 create_hypervisor_disk() {
@@ -334,9 +340,10 @@ create_hypervisor_vm() {
     local config_file="$1"
     local index="$2"
     local vm_name="$3"
-    local cpu="$4"
-    local memory="$5"
-    local iface_count="$6"
+    local hostname="$4"
+    local cpu="$5"
+    local memory="$6"
+    local iface_count="$7"
     
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     local mgmt_network="${dc_name}-mgmt"

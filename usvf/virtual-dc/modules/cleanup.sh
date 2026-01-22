@@ -81,18 +81,21 @@ destroy_all_vms() {
         return 0
     fi
     
-    # Destroy hypervisors
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file" 2>/dev/null || echo "virtual-dc")
+    
+    # Destroy hypervisors (with DC prefix)
     local hv_count=$(yq eval '.hypervisors | length' "$config_file" 2>/dev/null || echo "0")
     if [[ "$hv_count" -gt 0 ]]; then
         for i in $(seq 0 $((hv_count - 1))); do
             local hv_name=$(yq eval ".hypervisors[$i].name" "$config_file" 2>/dev/null)
             if [[ -n "$hv_name" ]] && [[ "$hv_name" != "null" ]]; then
-                destroy_single_vm "$hv_name"
+                local full_vm_name="${dc_name}-${hv_name}"
+                destroy_single_vm "$full_vm_name"
             fi
         done
     fi
     
-    # Destroy switches
+    # Destroy switches (with DC prefix)
     local switch_types=("leaf" "spine" "superspine")
     for switch_type in "${switch_types[@]}"; do
         local sw_count=$(yq eval ".switches.${switch_type} | length" "$config_file" 2>/dev/null || echo "0")
@@ -100,16 +103,16 @@ destroy_all_vms() {
             for i in $(seq 0 $((sw_count - 1))); do
                 local sw_name=$(yq eval ".switches.${switch_type}[$i].name" "$config_file" 2>/dev/null)
                 if [[ -n "$sw_name" ]] && [[ "$sw_name" != "null" ]]; then
-                    destroy_single_vm "$sw_name"
+                    local full_vm_name="${dc_name}-${sw_name}"
+                    destroy_single_vm "$full_vm_name"
                 fi
             done
         fi
     done
     
-    # Cleanup any remaining VMs that match pattern
-    local dc_name=$(yq eval '.global.datacenter_name' "$config_file" 2>/dev/null || echo "virtual-dc")
+    # Cleanup any remaining VMs that match DC prefix pattern
     for vm in $all_vms; do
-        if [[ "$vm" =~ ^(hypervisor|hv|leaf|spine|superspine|switch) ]]; then
+        if [[ "$vm" =~ ^${dc_name}- ]]; then
             destroy_single_vm "$vm"
         fi
     done
@@ -298,18 +301,21 @@ stop_all_vms() {
     
     log_info "Stopping all VMs..."
     
-    # Get hypervisors
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file" 2>/dev/null || echo "virtual-dc")
+    
+    # Get hypervisors (with DC prefix)
     local hv_count=$(yq eval '.hypervisors | length' "$config_file" 2>/dev/null || echo "0")
     if [[ "$hv_count" -gt 0 ]]; then
         for i in $(seq 0 $((hv_count - 1))); do
             local hv_name=$(yq eval ".hypervisors[$i].name" "$config_file" 2>/dev/null)
             if [[ -n "$hv_name" ]] && [[ "$hv_name" != "null" ]]; then
-                stop_single_vm "$hv_name"
+                local full_vm_name="${dc_name}-${hv_name}"
+                stop_single_vm "$full_vm_name"
             fi
         done
     fi
     
-    # Get switches
+    # Get switches (with DC prefix)
     local switch_types=("leaf" "spine" "superspine")
     for switch_type in "${switch_types[@]}"; do
         local sw_count=$(yq eval ".switches.${switch_type} | length" "$config_file" 2>/dev/null || echo "0")
@@ -317,7 +323,8 @@ stop_all_vms() {
             for i in $(seq 0 $((sw_count - 1))); do
                 local sw_name=$(yq eval ".switches.${switch_type}[$i].name" "$config_file" 2>/dev/null)
                 if [[ -n "$sw_name" ]] && [[ "$sw_name" != "null" ]]; then
-                    stop_single_vm "$sw_name"
+                    local full_vm_name="${dc_name}-${sw_name}"
+                    stop_single_vm "$full_vm_name"
                 fi
             done
         fi
@@ -346,18 +353,21 @@ start_all_vms() {
     
     log_info "Starting all VMs..."
     
-    # Get hypervisors
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file" 2>/dev/null || echo "virtual-dc")
+    
+    # Get hypervisors (with DC prefix)
     local hv_count=$(yq eval '.hypervisors | length' "$config_file" 2>/dev/null || echo "0")
     if [[ "$hv_count" -gt 0 ]]; then
         for i in $(seq 0 $((hv_count - 1))); do
             local hv_name=$(yq eval ".hypervisors[$i].name" "$config_file" 2>/dev/null)
             if [[ -n "$hv_name" ]] && [[ "$hv_name" != "null" ]]; then
-                start_single_vm "$hv_name"
+                local full_vm_name="${dc_name}-${hv_name}"
+                start_single_vm "$full_vm_name"
             fi
         done
     fi
     
-    # Get switches
+    # Get switches (with DC prefix)
     local switch_types=("leaf" "spine" "superspine")
     for switch_type in "${switch_types[@]}"; do
         local sw_count=$(yq eval ".switches.${switch_type} | length" "$config_file" 2>/dev/null || echo "0")
@@ -365,7 +375,8 @@ start_all_vms() {
             for i in $(seq 0 $((sw_count - 1))); do
                 local sw_name=$(yq eval ".switches.${switch_type}[$i].name" "$config_file" 2>/dev/null)
                 if [[ -n "$sw_name" ]] && [[ "$sw_name" != "null" ]]; then
-                    start_single_vm "$sw_name"
+                    local full_vm_name="${dc_name}-${sw_name}"
+                    start_single_vm "$full_vm_name"
                 fi
             done
         fi
@@ -398,10 +409,10 @@ list_resources() {
     log_info "Virtual DC Resources for: $dc_name"
     log_info "═══════════════════════════════════════════════════════"
     
-    # List VMs
+    # List VMs (with DC prefix)
     echo ""
     log_info "Virtual Machines:"
-    virsh list --all | grep -E "hypervisor|hv|leaf|spine|switch" || echo "  No VMs found"
+    virsh list --all | grep -E "$dc_name-" || echo "  No VMs found"
     
     # List Networks
     echo ""

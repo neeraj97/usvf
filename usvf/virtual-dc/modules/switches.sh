@@ -72,14 +72,19 @@ deploy_single_switch() {
     
     # Extract switch configuration
     local sw_name=$(yq eval ".switches.$tier[$index].name" "$config_file")
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     local router_id=$(yq eval ".switches.$tier[$index].router_id" "$config_file")
     local asn=$(yq eval ".switches.$tier[$index].asn" "$config_file")
     local mgmt_ip=$(yq eval ".switches.$tier[$index].management.ip" "$config_file")
     local ports=$(yq eval ".switches.$tier[$index].ports" "$config_file")
     local port_speed=$(yq eval ".switches.$tier[$index].port_speed" "$config_file")
     
+    # Create full VM name with DC prefix for proper isolation
+    local full_vm_name="${dc_name}-${sw_name}"
+    
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "Deploying $tier switch: $sw_name"
+    log_info "Deploying $tier switch: $full_vm_name"
+    log_info "  Hostname: $sw_name"
     log_info "  Router ID: $router_id"
     log_info "  ASN: $asn"
     log_info "  Management IP: $mgmt_ip"
@@ -87,20 +92,20 @@ deploy_single_switch() {
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
     if [[ "$dry_run" == "true" ]]; then
-        log_info "[DRY RUN] Would create SONiC switch VM: $sw_name"
+        log_info "[DRY RUN] Would create SONiC switch VM: $full_vm_name"
         return 0
     fi
     
-    # Step 1: Create cloud-init configuration for Ubuntu VM
-    create_sonic_cloud_init "$config_file" "$tier" "$index" "$sw_name"
+    # Step 1: Create cloud-init configuration for Ubuntu VM (use original sw_name for hostname)
+    create_sonic_cloud_init "$config_file" "$tier" "$index" "$sw_name" "$full_vm_name"
     
-    # Step 2: Create VM disk (will copy from Ubuntu base image)
-    create_sonic_disk "$sw_name"
+    # Step 2: Create VM disk (use full_vm_name for disk file)
+    create_sonic_disk "$config_file" "$full_vm_name"
     
-    # Step 3: Create and start Ubuntu VM that will run SONiC-VS
-    create_sonic_vm "$config_file" "$sw_name" "$ports"
+    # Step 3: Create and start Ubuntu VM that will run SONiC-VS (use full_vm_name for VM name)
+    create_sonic_vm "$config_file" "$full_vm_name" "$sw_name" "$ports"
     
-    log_success "✓ SONiC switch VM $sw_name deployed (SONiC-VS will auto-start)"
+    log_success "✓ SONiC switch VM $full_vm_name deployed (SONiC-VS will auto-start)"
 }
 
 create_sonic_cloud_init() {
@@ -108,6 +113,7 @@ create_sonic_cloud_init() {
     local tier="$2"
     local index="$3"
     local sw_name="$4"
+    local full_vm_name="$5"
     
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     local ssh_key_path=$(get_vdc_ssh_public_key "$dc_name")
@@ -119,10 +125,10 @@ create_sonic_cloud_init() {
     local mgmt_gw=$(yq eval '.global.management_network.gateway' "$config_file")
     local ports=$(yq eval ".switches.$tier[$index].ports" "$config_file")
     
-    local cloud_init_dir=$(get_vdc_cloud_init_vm_dir "$dc_name" "$sw_name")
+    local cloud_init_dir=$(get_vdc_cloud_init_vm_dir "$dc_name" "$full_vm_name")
     mkdir -p "$cloud_init_dir"
     
-    log_info "Creating cloud-init configuration for $sw_name..."
+    log_info "Creating cloud-init configuration for $full_vm_name..."
     
     # Create SONiC configuration that will be used by the container
     cat > "$cloud_init_dir/sonic_config.json" <<EOF
@@ -340,7 +346,7 @@ ethernets:
 EOF
 
     # Create cloud-init ISO
-    local iso_path=$(get_vdc_cloud_init_iso "$dc_name" "$sw_name")
+    local iso_path=$(get_vdc_cloud_init_iso "$dc_name" "$full_vm_name")
     
     if command -v genisoimage >/dev/null 2>&1; then
         genisoimage -output "$iso_path" \
@@ -363,14 +369,14 @@ EOF
         exit 1
     fi
     
-    log_success "✓ Cloud-init configuration created for $sw_name"
+    log_success "✓ Cloud-init configuration created for $full_vm_name"
 }
 
 create_sonic_disk() {
-    local sw_name="$1"
+    local config_file="$1"
+    local sw_name="$2"
     
-    # Extract DC name from switch name (e.g., prod-leaf1 -> prod)
-    local dc_name=$(echo "$sw_name" | sed -E 's/^([^-]+)-.*/\1/')
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     
     local disk_dir=$(get_vdc_disks_dir "$dc_name")
     mkdir -p "$disk_dir"
@@ -396,7 +402,8 @@ create_sonic_disk() {
 create_sonic_vm() {
     local config_file="$1"
     local sw_name="$2"
-    local ports="$3"
+    local hostname="$3"
+    local ports="$4"
     
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     local mgmt_network="${dc_name}-mgmt"
