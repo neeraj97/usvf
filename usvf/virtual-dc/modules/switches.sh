@@ -419,34 +419,35 @@ $(cat "$cloud_init_dir/configure-bgp.sh" | sed 's/^/      /')
     content: |
 $(cat "$cloud_init_dir/start-sonic.sh" | sed 's/^/      /')
 
-  - path: /etc/systemd/system/sonic-vs.service
-    permissions: '0644'
-    content: |
-      [Unit]
-      Description=SONiC Virtual Switch Container
-      After=docker.service
-      Requires=docker.service
-
-      [Service]
-      Type=oneshot
-      RemainAfterExit=yes
-      User=ubuntu
-      ExecStart=/home/ubuntu/start-sonic.sh
-      ExecStop=/usr/bin/docker stop sonic-vs
-      ExecStop=/usr/bin/docker rm sonic-vs
-
-      [Install]
-      WantedBy=multi-user.target
-
 runcmd:
   # Enable and start Docker
   - systemctl enable docker
   - systemctl start docker
   - usermod -aG docker ubuntu
-  
+
   # Wait for Docker to be fully ready
   - sleep 5
-  
+
+  # Create systemd service file for SONiC-VS
+  - |
+    cat > /etc/systemd/system/sonic-vs.service <<'EOFSVC'
+    [Unit]
+    Description=SONiC Virtual Switch Container
+    After=docker.service
+    Requires=docker.service
+
+    [Service]
+    Type=oneshot
+    RemainAfterExit=yes
+    User=ubuntu
+    ExecStart=/home/ubuntu/start-sonic.sh
+    ExecStop=/usr/bin/docker stop sonic-vs
+    ExecStop=/usr/bin/docker rm sonic-vs
+
+    [Install]
+    WantedBy=multi-user.target
+    EOFSVC
+
   # Enable SONiC-VS service (will auto-start on boot)
   - systemctl daemon-reload
   - systemctl enable sonic-vs.service
