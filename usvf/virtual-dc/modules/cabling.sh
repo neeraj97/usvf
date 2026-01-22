@@ -74,7 +74,7 @@ create_p2p_network() {
 <network>
   <name>$network_name</name>
   <forward mode='none'/>
-  <bridge name='virbr-${dc_name}-p2p-${link_id}' stp='off' delay='0'/>
+  <bridge name='vbr-${dc_name}-p2p-${link_id}' stp='off' delay='0'/>
 </network>
 EOF
     

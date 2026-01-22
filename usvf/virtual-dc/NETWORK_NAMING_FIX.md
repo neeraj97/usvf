@@ -30,7 +30,7 @@ create_p2p_network() {
     cat > "$network_xml" <<EOF
 <network>
   <name>$network_name</name>
-  <bridge name='virbr-p2p-${link_id}' />
+  <bridge name='vbr-p2p-${link_id}' />
 </network>
 EOF
 }
@@ -47,7 +47,7 @@ create_p2p_network() {
     cat > "$network_xml" <<EOF
 <network>
   <name>$network_name</name>
-  <bridge name='virbr-${dc_name}-p2p-${link_id}' />
+  <bridge name='vbr-${dc_name}-p2p-${link_id}' />
 </network>
 EOF
 }
@@ -115,7 +115,7 @@ attach_interface_to_vm "$config_file" "$vm_name" "$iface_name" "$link_id"
 | **Management Network** | `{dcname}-mgmt` | `prod-mgmt` |
 | **Data Network** | `{dcname}-data` | `prod-data` |
 | **P2P Link Networks** | `{dcname}-p2p-link-{id}` | `prod-p2p-link-0` |
-| **Bridge Devices** | `virbr-{dcname}-{type}-{id}` | `virbr-prod-p2p-0` |
+| **Bridge Devices** | `vbr-{dcname}-{type}-{id}` | `vbr-prod-p2p-0` |
 | **Network XML Files** | `config/vdc-{dcname}/networks/{name}.xml` | `config/vdc-prod/networks/prod-p2p-link-0.xml` |
 | **VM Disks** | `config/vdc-{dcname}/disks/{vmname}.qcow2` | `config/vdc-prod/disks/prod-hv1.qcow2` |
 

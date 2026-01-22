@@ -52,7 +52,7 @@ create_libvirt_mgmt_network() {
 <network>
   <name>$network_name</name>
   <forward mode='nat'/>
-  <bridge name='virbr-${dc_name}' stp='on' delay='0'/>
+  <bridge name='vbr-${dc_name}' stp='on' delay='0'/>
   <ip address='$gateway' netmask='255.255.255.0'>
     <dhcp>
       <range start='$dhcp_start' end='$dhcp_end'/>
