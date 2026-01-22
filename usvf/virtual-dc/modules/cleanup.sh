@@ -192,7 +192,7 @@ remove_disk_images() {
     
     log_info "Removing disk images..."
     
-    local disk_dir="$PROJECT_ROOT/config/disks"
+    local disk_dir=$(get_vdc_disks_dir "$dc_name")
     
     if [[ -d "$disk_dir" ]]; then
         local disk_count=$(find "$disk_dir" -name "*.qcow2" | wc -l)
@@ -215,7 +215,7 @@ remove_cloud_init_configs() {
     
     log_info "Removing cloud-init configurations..."
     
-    local cloud_init_dir="$PROJECT_ROOT/config/cloud-init"
+    local cloud_init_dir=$(get_vdc_cloud_init_dir "$dc_name")
     
     if [[ -d "$cloud_init_dir" ]]; then
         local iso_count=$(find "$cloud_init_dir" -name "*.iso" | wc -l)
@@ -239,7 +239,7 @@ remove_bgp_configs() {
     
     log_info "Removing BGP configurations..."
     
-    local bgp_config_dir="$PROJECT_ROOT/config/bgp-configs"
+    local bgp_config_dir=$(get_vdc_bgp_configs_dir "$dc_name")
     
     if [[ -d "$bgp_config_dir" ]]; then
         rm -rf "$bgp_config_dir"/*
@@ -256,13 +256,14 @@ remove_ssh_keys() {
     
     log_info "Checking SSH keys..."
     
-    local ssh_key_path="$PROJECT_ROOT/config/${dc_name}-ssh-key"
+    local ssh_key_path=$(get_vdc_ssh_private_key "$dc_name")
+    local ssh_pubkey_path=$(get_vdc_ssh_public_key "$dc_name")
     
-    if [[ -f "$ssh_key_path" ]] || [[ -f "${ssh_key_path}.pub" ]]; then
+    if [[ -f "$ssh_key_path" ]] || [[ -f "$ssh_pubkey_path" ]]; then
         echo ""
         read -p "Remove SSH keys for $dc_name? (y/N): " remove_keys
         if [[ "$remove_keys" =~ ^[Yy]$ ]]; then
-            rm -f "$ssh_key_path" "${ssh_key_path}.pub"
+            rm -f "$ssh_key_path" "$ssh_pubkey_path"
             log_success "  ✓ SSH keys removed"
         else
             log_info "  ✓ SSH keys preserved"
@@ -410,8 +411,9 @@ list_resources() {
     # Disk usage
     echo ""
     log_info "Disk Images:"
-    if [[ -d "$PROJECT_ROOT/config/disks" ]]; then
-        du -sh "$PROJECT_ROOT/config/disks"/*.qcow2 2>/dev/null || echo "  No disk images found"
+    local disk_dir=$(get_vdc_disks_dir "$dc_name")
+    if [[ -d "$disk_dir" ]]; then
+        du -sh "$disk_dir"/*.qcow2 2>/dev/null || echo "  No disk images found"
     else
         echo "  No disk directory found"
     fi
@@ -419,8 +421,9 @@ list_resources() {
     # Cloud-init ISOs
     echo ""
     log_info "Cloud-init ISOs:"
-    if [[ -d "$PROJECT_ROOT/config/cloud-init" ]]; then
-        find "$PROJECT_ROOT/config/cloud-init" -name "*.iso" -exec du -sh {} \; 2>/dev/null || echo "  No ISOs found"
+    local cloud_init_dir=$(get_vdc_cloud_init_dir "$dc_name")
+    if [[ -d "$cloud_init_dir" ]]; then
+        find "$cloud_init_dir" -name "*.iso" -exec du -sh {} \; 2>/dev/null || echo "  No ISOs found"
     else
         echo "  No cloud-init directory found"
     fi

@@ -24,6 +24,9 @@ deploy_vdc() {
     
     log_info "Deploying VDC: $vdc_name"
     
+    # Ensure VDC directory structure exists
+    ensure_vdc_directories "$vdc_name"
+    
     # Call the main deployment script with VDC-specific parameters
     local deploy_script="$PROJECT_ROOT/scripts/deploy-virtual-dc.sh"
     
@@ -134,11 +137,11 @@ destroy_vdc_disks() {
     
     log_info "Cleaning up disk images for VDC: $vdc_name"
     
-    local disk_dir="$PROJECT_ROOT/config/disks"
+    local disk_dir=$(get_vdc_disks_dir "$vdc_name")
     
     if [[ -d "$disk_dir" ]]; then
-        # Remove disks with VDC prefix
-        find "$disk_dir" -name "${vdc_name}-*.qcow2" -delete 2>/dev/null || true
+        # Remove all disks in VDC disk directory
+        find "$disk_dir" -name "*.qcow2" -delete 2>/dev/null || true
         log_success "Cleaned up disk images"
     fi
 }
@@ -148,12 +151,11 @@ destroy_vdc_cloud_init() {
     
     log_info "Cleaning up cloud-init files for VDC: $vdc_name"
     
-    local cloud_init_dir="$PROJECT_ROOT/config/cloud-init"
+    local cloud_init_dir=$(get_vdc_cloud_init_dir "$vdc_name")
     
     if [[ -d "$cloud_init_dir" ]]; then
-        # Remove cloud-init directories and ISOs with VDC prefix
-        find "$cloud_init_dir" -name "${vdc_name}-*" -type d -exec rm -rf {} + 2>/dev/null || true
-        find "$cloud_init_dir" -name "${vdc_name}-*.iso" -delete 2>/dev/null || true
+        # Remove all cloud-init files in VDC cloud-init directory
+        rm -rf "$cloud_init_dir"/*
         log_success "Cleaned up cloud-init files"
     fi
 }
@@ -318,13 +320,13 @@ show_vdc_resources() {
     echo "DISK USAGE"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
-    local disk_dir="$PROJECT_ROOT/config/disks"
+    local disk_dir=$(get_vdc_disks_dir "$vdc_name")
     if [[ -d "$disk_dir" ]]; then
-        local total_size=$(du -sh "$disk_dir/${vdc_name}-"*.qcow2 2>/dev/null | awk '{sum+=$1} END {print sum}' || echo "0")
-        local disk_count=$(ls -1 "$disk_dir/${vdc_name}-"*.qcow2 2>/dev/null | wc -l || echo "0")
+        local disk_count=$(count_vdc_disks "$vdc_name")
+        local total_size=$(get_vdc_total_disk_usage "$vdc_name")
         
         echo "Total Disks:  $disk_count"
-        echo "Total Size:   $(du -sh "$disk_dir" 2>/dev/null | awk '{print $1}' || echo '0')"
+        echo "Total Size:   $total_size"
     else
         echo "No disk directory found"
     fi
@@ -559,14 +561,14 @@ find_orphaned_networks() {
 
 find_orphaned_disks() {
     local vdc_name="$1"
-    local disk_dir="$PROJECT_ROOT/config/disks"
+    local disk_dir=$(get_vdc_disks_dir "$vdc_name")
     
     if [[ ! -d "$disk_dir" ]]; then
         return 0
     fi
     
-    # Get all disks with VDC prefix
-    local all_disks=$(ls -1 "$disk_dir/${vdc_name}-"*.qcow2 2>/dev/null || true)
+    # Get all disks in VDC disk directory
+    local all_disks=$(list_vdc_disks "$vdc_name")
     
     if [[ -z "$all_disks" ]]; then
         return 0

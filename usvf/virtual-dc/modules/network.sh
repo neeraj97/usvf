@@ -35,7 +35,7 @@ create_libvirt_mgmt_network() {
     local dry_run="$4"
     
     local network_name="${dc_name}-mgmt"
-    local network_xml="$PROJECT_ROOT/config/${network_name}.xml"
+    local network_xml=$(get_vdc_network_xml "$dc_name" "$network_name")
     
     # Extract network address and prefix
     local network_addr=$(echo "$subnet" | cut -d'/' -f1 | sed 's/\.[0-9]*$//')

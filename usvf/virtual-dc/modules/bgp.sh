@@ -31,7 +31,7 @@ configure_bgp_hypervisors() {
     
     local hv_count=$(yq eval '.hypervisors | length' "$config_file")
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
-    local ssh_key="$PROJECT_ROOT/config/${dc_name}-ssh-key"
+    local ssh_key=$(get_vdc_ssh_private_key "$dc_name")
     
     for i in $(seq 0 $((hv_count - 1))); do
         local hv_name=$(yq eval ".hypervisors[$i].name" "$config_file")
@@ -64,8 +64,9 @@ generate_hypervisor_bgp_config() {
     
     local router_id=$(yq eval ".hypervisors[$index].router_id" "$config_file")
     local asn=$(yq eval ".hypervisors[$index].asn" "$config_file")
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     
-    local bgp_config_dir="$PROJECT_ROOT/config/bgp-configs"
+    local bgp_config_dir=$(get_vdc_bgp_configs_dir "$dc_name")
     mkdir -p "$bgp_config_dir"
     
     # Find all neighbors from cabling configuration
@@ -137,7 +138,9 @@ apply_hypervisor_bgp_config() {
     local mgmt_ip="$2"
     local ssh_key="$3"
     
-    local bgp_config="$PROJECT_ROOT/config/bgp-configs/${hv_name}-bgp.conf"
+    # Extract DC name from hv_name (e.g., prod-hv1 -> prod)
+    local dc_name=$(echo "$hv_name" | sed -E 's/^([^-]+)-.*/\1/')
+    local bgp_config=$(get_vdc_bgp_config_file "$dc_name" "$hv_name")
     
     log_info "Applying BGP configuration to $hv_name..."
     
@@ -166,7 +169,7 @@ configure_bgp_switches() {
     log_info "Configuring BGP on switches..."
     
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
-    local ssh_key="$PROJECT_ROOT/config/${dc_name}-ssh-key"
+    local ssh_key=$(get_vdc_ssh_private_key "$dc_name")
     
     # Configure each tier
     for tier in leaf spine superspine; do
@@ -209,8 +212,9 @@ generate_switch_bgp_config() {
     
     local router_id=$(yq eval ".switches.$tier[$index].router_id" "$config_file")
     local asn=$(yq eval ".switches.$tier[$index].asn" "$config_file")
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     
-    local bgp_config_dir="$PROJECT_ROOT/config/bgp-configs"
+    local bgp_config_dir=$(get_vdc_bgp_configs_dir "$dc_name")
     mkdir -p "$bgp_config_dir"
     
     # Find all neighbors from cabling configuration
@@ -267,7 +271,9 @@ apply_switch_bgp_config() {
     local mgmt_ip="$2"
     local ssh_key="$3"
     
-    local bgp_config="$PROJECT_ROOT/config/bgp-configs/${sw_name}-bgp.conf"
+    # Extract DC name from sw_name (e.g., prod-leaf1 -> prod)
+    local dc_name=$(echo "$sw_name" | sed -E 's/^([^-]+)-.*/\1/')
+    local bgp_config=$(get_vdc_bgp_config_file "$dc_name" "$sw_name")
     
     log_info "Applying BGP configuration to $sw_name..."
     

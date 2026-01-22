@@ -74,9 +74,13 @@ deploy_single_hypervisor() {
 
 setup_ssh_keys() {
     local dc_name="$1"
-    local ssh_key_path="$PROJECT_ROOT/config/${dc_name}-ssh-key"
+    local ssh_key_path=$(get_vdc_ssh_private_key "$dc_name")
     
     if [[ ! -f "$ssh_key_path" ]]; then
+        # Ensure SSH keys directory exists
+        local ssh_keys_dir=$(get_vdc_ssh_keys_dir "$dc_name")
+        mkdir -p "$ssh_keys_dir"
+        
         log_info "Generating SSH key pair for VM access..."
         ssh-keygen -t rsa -b 4096 -f "$ssh_key_path" -N "" -C "virtual-dc-${dc_name}"
         log_success "✓ SSH keys generated: $ssh_key_path"
@@ -91,7 +95,7 @@ create_hypervisor_cloud_init() {
     local hv_name="$3"
     
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
-    local ssh_key_path="$PROJECT_ROOT/config/${dc_name}-ssh-key.pub"
+    local ssh_key_path=$(get_vdc_ssh_public_key "$dc_name")
     local ssh_pubkey=$(cat "$ssh_key_path")
     
     local router_id=$(yq eval ".hypervisors[$index].router_id" "$config_file")
@@ -99,7 +103,7 @@ create_hypervisor_cloud_init() {
     local mgmt_ip=$(yq eval ".hypervisors[$index].management.ip" "$config_file")
     local mgmt_gw=$(yq eval '.global.management_network.gateway' "$config_file")
     
-    local cloud_init_dir="$PROJECT_ROOT/config/cloud-init/$hv_name"
+    local cloud_init_dir=$(get_vdc_cloud_init_vm_dir "$dc_name" "$hv_name")
     mkdir -p "$cloud_init_dir"
     
     # Create meta-data
@@ -266,7 +270,7 @@ ethernets:
 EOF
     
     # Create cloud-init ISO
-    local iso_path="$PROJECT_ROOT/config/cloud-init/${hv_name}-cidata.iso"
+    local iso_path=$(get_vdc_cloud_init_iso "$dc_name" "$hv_name")
     
     if command -v genisoimage &> /dev/null; then
         genisoimage -output "$iso_path" \
@@ -292,10 +296,13 @@ create_vm_disk() {
     local vm_name="$1"
     local disk_size="$2"
     
-    local disk_dir="$PROJECT_ROOT/config/disks"
+    # Extract DC name from VM name (e.g., prod-hv1 -> prod)
+    local dc_name=$(echo "$vm_name" | sed -E 's/^([^-]+)-.*/\1/')
+    
+    local disk_dir=$(get_vdc_disks_dir "$dc_name")
     mkdir -p "$disk_dir"
     
-    local disk_path="$disk_dir/${vm_name}.qcow2"
+    local disk_path=$(get_vdc_disk_path "$dc_name" "$vm_name")
     local base_image="$PROJECT_ROOT/images/ubuntu-24.04-server-cloudimg-amd64.img"
     
     log_info "Creating disk for $vm_name (${disk_size}GB)..."
@@ -333,8 +340,8 @@ create_hypervisor_vm() {
     
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     local mgmt_network="${dc_name}-mgmt"
-    local disk_path="$PROJECT_ROOT/config/disks/${vm_name}.qcow2"
-    local cidata_path="$PROJECT_ROOT/config/cloud-init/${vm_name}-cidata.iso"
+    local disk_path=$(get_vdc_disk_path "$dc_name" "$vm_name")
+    local cidata_path=$(get_vdc_cloud_init_iso "$dc_name" "$vm_name")
     
     log_info "Creating VM: $vm_name with Ubuntu 24.04 (Noble Numbat)"
     log_info "  vCPUs: $cpu, Memory: ${memory}MB"

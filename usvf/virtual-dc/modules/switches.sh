@@ -110,7 +110,7 @@ create_sonic_cloud_init() {
     local sw_name="$4"
     
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
-    local ssh_key_path="$PROJECT_ROOT/config/${dc_name}-ssh-key.pub"
+    local ssh_key_path=$(get_vdc_ssh_public_key "$dc_name")
     local ssh_pubkey=$(cat "$ssh_key_path")
     
     local router_id=$(yq eval ".switches.$tier[$index].router_id" "$config_file")
@@ -119,7 +119,7 @@ create_sonic_cloud_init() {
     local mgmt_gw=$(yq eval '.global.management_network.gateway' "$config_file")
     local ports=$(yq eval ".switches.$tier[$index].ports" "$config_file")
     
-    local cloud_init_dir="$PROJECT_ROOT/config/cloud-init/$sw_name"
+    local cloud_init_dir=$(get_vdc_cloud_init_vm_dir "$dc_name" "$sw_name")
     mkdir -p "$cloud_init_dir"
     
     log_info "Creating cloud-init configuration for $sw_name..."
@@ -340,7 +340,7 @@ ethernets:
 EOF
 
     # Create cloud-init ISO
-    local iso_path="$PROJECT_ROOT/config/cloud-init/${sw_name}-cloud-init.iso"
+    local iso_path=$(get_vdc_cloud_init_iso "$dc_name" "$sw_name")
     
     if command -v genisoimage >/dev/null 2>&1; then
         genisoimage -output "$iso_path" \
@@ -369,11 +369,14 @@ EOF
 create_sonic_disk() {
     local sw_name="$1"
     
-    local disk_dir="$PROJECT_ROOT/config/disks"
+    # Extract DC name from switch name (e.g., prod-leaf1 -> prod)
+    local dc_name=$(echo "$sw_name" | sed -E 's/^([^-]+)-.*/\1/')
+    
+    local disk_dir=$(get_vdc_disks_dir "$dc_name")
     mkdir -p "$disk_dir"
     
     local base_image="$PROJECT_ROOT/images/ubuntu-24.04-server-cloudimg-amd64.img"
-    local disk_path="$disk_dir/${sw_name}.qcow2"
+    local disk_path=$(get_vdc_disk_path "$dc_name" "$sw_name")
     
     log_info "Creating disk for switch $sw_name from Ubuntu 24.04 base image..."
     
@@ -397,8 +400,8 @@ create_sonic_vm() {
     
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     local mgmt_network="${dc_name}-mgmt"
-    local disk_path="$PROJECT_ROOT/config/disks/${sw_name}.qcow2"
-    local cloud_init_iso="$PROJECT_ROOT/config/cloud-init/${sw_name}-cloud-init.iso"
+    local disk_path=$(get_vdc_disk_path "$dc_name" "$sw_name")
+    local cloud_init_iso=$(get_vdc_cloud_init_iso "$dc_name" "$sw_name")
     
     log_info "Creating Ubuntu VM for switch: $sw_name"
     
@@ -561,7 +564,8 @@ delete_switch() {
         log_warn "Switch $sw_name not found"
     fi
     
-    # Clean up cloud-init files
-    rm -rf "$PROJECT_ROOT/config/cloud-init/$sw_name"
-    rm -f "$PROJECT_ROOT/config/cloud-init/${sw_name}-cloud-init.iso"
+    # Clean up cloud-init files using vdc-paths
+    # Extract DC name from switch name (e.g., prod-leaf1 -> prod)
+    local dc_name=$(echo "$sw_name" | sed -E 's/^([^-]+)-.*/\1/')
+    remove_vdc_cloud_init_iso "$dc_name" "$sw_name"
 }
