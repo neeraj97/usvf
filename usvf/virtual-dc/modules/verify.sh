@@ -11,24 +11,24 @@
 
 verify_deployment() {
     local config_file="$1"
-    
+
     log_info "Starting deployment verification..."
-    
+
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
-    local ssh_key="$PROJECT_ROOT/config/${dc_name}-ssh-key"
-    
+    local ssh_key=$(get_vdc_ssh_private_key "$dc_name")
+
     # Verify VMs
     verify_vms "$config_file"
-    
+
     # Verify network connectivity
     verify_network_connectivity "$config_file" "$ssh_key"
-    
+
     # Verify BGP sessions
     verify_bgp_sessions "$config_file" "$ssh_key"
-    
+
     # Generate verification report
     generate_verification_report "$config_file" "$ssh_key"
-    
+
     log_success "Deployment verification completed"
 }
 
