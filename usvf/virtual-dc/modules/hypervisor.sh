@@ -64,7 +64,7 @@ deploy_single_hypervisor() {
     create_hypervisor_cloud_init "$config_file" "$index" "$hv_name"
     
     # Create VM disk
-    create_vm_disk "$hv_name" "$disk"
+    create_hypervisor_disk "$config_file" "$hv_name" "$disk"
     
     # Create and start VM
     create_hypervisor_vm "$config_file" "$index" "$hv_name" "$cpu" "$memory" "$iface_count"
@@ -292,12 +292,12 @@ EOF
     log_success "✓ Cloud-init configuration created for $hv_name"
 }
 
-create_vm_disk() {
-    local vm_name="$1"
-    local disk_size="$2"
+create_hypervisor_disk() {
+    local config_file="$1"
+    local vm_name="$2"
+    local disk_size="$3"
     
-    # Extract DC name from VM name (e.g., prod-hv1 -> prod)
-    local dc_name=$(echo "$vm_name" | sed -E 's/^([^-]+)-.*/\1/')
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
     
     local disk_dir=$(get_vdc_disks_dir "$dc_name")
     mkdir -p "$disk_dir"
