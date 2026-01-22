@@ -239,70 +239,70 @@ cabling:
   # Hypervisor to Leaf connections
   - source:
       device: "hypervisor-1"
-      interface: "eth1"
+      interface: "enp2s0"
     destination:
       device: "leaf-1"
       interface: "Ethernet1"
     link_type: "p2p"
     description: "HV1 to Leaf-1"
-  
+
   - source:
       device: "hypervisor-1"
-      interface: "eth2"
+      interface: "enp3s0"
     destination:
       device: "leaf-2"
       interface: "Ethernet1"
     link_type: "p2p"
     description: "HV1 to Leaf-2"
-  
+
   - source:
       device: "hypervisor-2"
-      interface: "eth1"
+      interface: "enp2s0"
     destination:
       device: "leaf-1"
       interface: "Ethernet2"
     link_type: "p2p"
     description: "HV2 to Leaf-1"
-  
+
   - source:
       device: "hypervisor-2"
-      interface: "eth2"
+      interface: "enp3s0"
     destination:
       device: "leaf-2"
       interface: "Ethernet2"
     link_type: "p2p"
     description: "HV2 to Leaf-2"
-  
+
   - source:
       device: "hypervisor-3"
-      interface: "eth1"
+      interface: "enp2s0"
     destination:
       device: "leaf-2"
       interface: "Ethernet3"
     link_type: "p2p"
     description: "HV3 to Leaf-2"
-  
+
   - source:
       device: "hypervisor-3"
-      interface: "eth2"
+      interface: "enp3s0"
     destination:
       device: "leaf-3"
       interface: "Ethernet1"
     link_type: "p2p"
     description: "HV3 to Leaf-3"
-  
+
   - source:
       device: "hypervisor-4"
-      interface: "eth1"
+      interface: "enp2s0"
     destination:
       device: "leaf-2"
       interface: "Ethernet4"
     link_type: "p2p"
     description: "HV4 to Leaf-2"
-  
+
   - source:
       device: "hypervisor-4"
-      interface: "eth2"
+      interface: "enp3s0"
     destination:
       device: "leaf-3"
       interface: "Ethernet2"
