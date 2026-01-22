@@ -59,17 +59,25 @@ create_management_network() {
         return 0
     fi
 
-    # Get management network configuration from topology.yaml
-    # Note: vdc-manager.sh should populate these values before deployment
-    local mgmt_subnet=$(yq eval '.global.management_network.subnet' "$config_file")
-    local mgmt_gateway=$(yq eval '.global.management_network.gateway' "$config_file")
+    # Try to get subnet from vdc-manager registry first
+    local mgmt_subnet=""
+    local VDC_REGISTRY="$PROJECT_ROOT/.vdc-registry.json"
 
-    # Validate that values exist (should be set by vdc-manager)
-    if [[ -z "$mgmt_subnet" || "$mgmt_subnet" == "null" ]]; then
-        log_error "Management network subnet not configured in topology.yaml"
-        log_error "Please use vdc-manager.sh to create and manage virtual datacenters"
-        return 1
+    if [[ -f "$VDC_REGISTRY" ]]; then
+        mgmt_subnet=$(jq -r ".virtual_datacenters[] | select(.name == \"$dc_name\") | .management_subnet" "$VDC_REGISTRY" 2>/dev/null)
     fi
+
+    # If not found in registry, auto-assign next available subnet
+    if [[ -z "$mgmt_subnet" || "$mgmt_subnet" == "null" ]]; then
+        log_warn "Management subnet not found in VDC registry, auto-assigning..."
+        mgmt_subnet=$(auto_assign_subnet)
+        log_info "Auto-assigned subnet: $mgmt_subnet"
+    fi
+
+    # Extract gateway from subnet
+    local subnet_ip=$(echo "$mgmt_subnet" | cut -d'/' -f1)
+    local network_base=$(echo "$subnet_ip" | sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+$/\1/')
+    local mgmt_gateway="${network_base}.1"
 
     log_info "Management subnet: $mgmt_subnet"
     log_info "Management gateway: $mgmt_gateway"
@@ -78,6 +86,41 @@ create_management_network() {
     create_libvirt_mgmt_network "$dc_name" "$mgmt_subnet" "$mgmt_gateway" "$dry_run"
 
     log_success "Management network created successfully"
+}
+
+auto_assign_subnet() {
+    # Find next available /24 subnet in 192.168.x.0/24 range
+    local base_octet=10
+    local VDC_REGISTRY="$PROJECT_ROOT/.vdc-registry.json"
+
+    # Get used subnets from both registry and active networks
+    local used_subnets=""
+    if [[ -f "$VDC_REGISTRY" ]]; then
+        used_subnets=$(jq -r '.virtual_datacenters[].management_subnet' "$VDC_REGISTRY" 2>/dev/null | cut -d'.' -f3)
+    fi
+
+    # Also check existing libvirt networks
+    local existing_nets=$(virsh net-list --all --name 2>/dev/null | grep -E "^.*-mgmt$" || true)
+    for net in $existing_nets; do
+        local net_subnet=$(virsh net-dumpxml "$net" 2>/dev/null | grep -oP "address='\K[^']+" | head -1)
+        if [[ -n "$net_subnet" ]]; then
+            local octet=$(echo "$net_subnet" | cut -d'.' -f3)
+            used_subnets+=$'\n'"$octet"
+        fi
+    done
+
+    while true; do
+        local subnet="192.168.${base_octet}.0/24"
+        if ! echo "$used_subnets" | grep -q "^${base_octet}$"; then
+            echo "$subnet"
+            return
+        fi
+        base_octet=$((base_octet + 1))
+        if [[ $base_octet -gt 254 ]]; then
+            log_error "No available subnets in 192.168.x.0/24 range"
+            return 1
+        fi
+    done
 }
 
 create_libvirt_mgmt_network() {

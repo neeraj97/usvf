@@ -11,12 +11,8 @@ global:
   datacenter_name: "simple-lab"
   virtualization_platform: "kvm"
 
-  # Management network configuration
-  # NOTE: When using vdc-manager.sh, these values are auto-assigned
-  management_network:
-    subnet: "192.168.100.0/24"  # Auto-assigned by vdc-manager
-    gateway: "192.168.100.1"    # Auto-assigned by vdc-manager
-    description: "Out-of-band management network (L2)"
+  # Management network is automatically created and managed by vdc-manager.sh
+  # No manual configuration needed - subnet and gateway are auto-assigned
   
   kvm_settings:
     base_image: "ubuntu-22.04"
@@ -28,7 +24,6 @@ hypervisors:
     router_id: "1.1.1.1"
     asn: 65001
     management:
-      ip: "192.168.100.11/24"
       switch: "mgmt-sw"
     data_interfaces:
       - name: "eth1"
@@ -43,7 +38,6 @@ hypervisors:
     router_id: "1.1.1.2"
     asn: 65002
     management:
-      ip: "192.168.100.12/24"
       switch: "mgmt-sw"
     data_interfaces:
       - name: "eth1"
@@ -59,8 +53,7 @@ switches:
       router_id: "2.2.2.1"
       asn: 65101
       management:
-        ip: "192.168.100.101/24"
-        switch: "mgmt-sw"
+          switch: "mgmt-sw"
       ports: 32
       port_speed: "10G"
       description: "Top-of-Rack switch"

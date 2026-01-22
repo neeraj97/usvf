@@ -334,22 +334,74 @@ update_vdc_config() {
     local config_file="$1"
     local vdc_name="$2"
     local mgmt_subnet="$3"
-    
+
     # Update datacenter_name
     yq eval ".global.datacenter_name = \"${vdc_name}\"" -i "$config_file"
-    
-    # Update management network subnet
-    yq eval ".global.management_network.subnet = \"${mgmt_subnet}\"" -i "$config_file"
-    
-    # Update gateway (first IP in subnet)
+
     # Extract network portion: 192.168.10.0/24 -> 192.168.10
     local subnet_ip=$(echo "$mgmt_subnet" | cut -d'/' -f1)
     local network_base=$(echo "$subnet_ip" | sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+$/\1/')
     local gateway="${network_base}.1"
-    
-    yq eval ".global.management_network.gateway = \"${gateway}\"" -i "$config_file"
-    
-    log_success "Updated VDC configuration (gateway: $gateway)"
+
+    log_info "Updating management IPs for all devices to match subnet ${mgmt_subnet}..."
+
+    # Assign continuous IPs starting from .11 (reserving .1-.10 for gateway and DHCP)
+    local next_ip=11
+
+    # Update hypervisor management IPs
+    local hv_count=$(yq eval '.hypervisors | length' "$config_file")
+    for i in $(seq 0 $((hv_count - 1))); do
+        local new_ip="${network_base}.${next_ip}/24"
+        yq eval ".hypervisors[$i].management.ip = \"${new_ip}\"" -i "$config_file"
+        next_ip=$((next_ip + 1))
+    done
+    local hv_end_ip=$((next_ip - 1))
+
+    # Update leaf switch management IPs
+    local leaf_count=$(yq eval '.switches.leaf | length' "$config_file")
+    local leaf_start_ip=$next_ip
+    for i in $(seq 0 $((leaf_count - 1))); do
+        local new_ip="${network_base}.${next_ip}/24"
+        yq eval ".switches.leaf[$i].management.ip = \"${new_ip}\"" -i "$config_file"
+        next_ip=$((next_ip + 1))
+    done
+    local leaf_end_ip=$((next_ip - 1))
+
+    # Update spine switch management IPs
+    local spine_count=$(yq eval '.switches.spine | length' "$config_file")
+    local spine_start_ip=$next_ip
+    for i in $(seq 0 $((spine_count - 1))); do
+        local new_ip="${network_base}.${next_ip}/24"
+        yq eval ".switches.spine[$i].management.ip = \"${new_ip}\"" -i "$config_file"
+        next_ip=$((next_ip + 1))
+    done
+    local spine_end_ip=$((next_ip - 1))
+
+    # Update superspine switch management IPs
+    local superspine_count=$(yq eval '.switches.superspine | length' "$config_file")
+    local superspine_start_ip=$next_ip
+    for i in $(seq 0 $((superspine_count - 1))); do
+        local new_ip="${network_base}.${next_ip}/24"
+        yq eval ".switches.superspine[$i].management.ip = \"${new_ip}\"" -i "$config_file"
+        next_ip=$((next_ip + 1))
+    done
+    local superspine_end_ip=$((next_ip - 1))
+
+    log_success "Updated VDC configuration with continuous IP allocation:"
+    log_success "  - Gateway: $gateway"
+    log_success "  - Reserved for infrastructure: ${network_base}.2-10"
+    if [[ $hv_count -gt 0 ]]; then
+        log_success "  - Hypervisors (${hv_count}): ${network_base}.11-${hv_end_ip}"
+    fi
+    if [[ $leaf_count -gt 0 ]]; then
+        log_success "  - Leaf switches (${leaf_count}): ${network_base}.${leaf_start_ip}-${leaf_end_ip}"
+    fi
+    if [[ $spine_count -gt 0 ]]; then
+        log_success "  - Spine switches (${spine_count}): ${network_base}.${spine_start_ip}-${spine_end_ip}"
+    fi
+    if [[ $superspine_count -gt 0 ]]; then
+        log_success "  - SuperSpine switches (${superspine_count}): ${network_base}.${superspine_start_ip}-${superspine_end_ip}"
+    fi
 }
 
 ################################################################################

@@ -40,15 +40,8 @@ global:
   datacenter_name: "virtual-dc-lab"
   virtualization_platform: "kvm"  # kvm, virtualbox, vmware
 
-  # Management network configuration
-  # NOTE: When using vdc-manager.sh, the management network subnet and gateway
-  # are automatically assigned and configured. The vdc-manager will update these
-  # values in this file. Manual configuration is only needed if deploying without
-  # vdc-manager.
-  management_network:
-    subnet: "192.168.100.0/24"  # Auto-assigned by vdc-manager (192.168.10.x, 192.168.11.x, etc.)
-    gateway: "192.168.100.1"    # Auto-assigned by vdc-manager (.1 of subnet)
-    dns: ["8.8.8.8", "8.8.4.4"]
+  # Management network is automatically created and managed by vdc-manager.sh
+  # No manual configuration needed - subnet and gateway are auto-assigned
   
   # Default BGP settings
   bgp_defaults:
@@ -77,8 +70,8 @@ hypervisors:
     router_id: "1.1.1.1"
     asn: 65001
     management:
-      ip: "192.168.100.11/24"
       interface: "eth0"
+      # IP is auto-assigned by vdc-manager (continuous allocation starting from .11)
     data_interfaces:
       - name: "eth1"
         description: "Connection to Leaf-1"
@@ -94,7 +87,6 @@ hypervisors:
     router_id: "1.1.1.2"
     asn: 65002
     management:
-      ip: "192.168.100.12/24"
       interface: "eth0"
     data_interfaces:
       - name: "eth1"
@@ -111,7 +103,6 @@ hypervisors:
     router_id: "1.1.1.3"
     asn: 65003
     management:
-      ip: "192.168.100.13/24"
       interface: "eth0"
     data_interfaces:
       - name: "eth1"
@@ -128,7 +119,6 @@ hypervisors:
     router_id: "1.1.1.4"
     asn: 65004
     management:
-      ip: "192.168.100.14/24"
       interface: "eth0"
     data_interfaces:
       - name: "eth1"
@@ -153,8 +143,7 @@ switches:
       router_id: "2.2.2.1"
       asn: 65101
       management:
-        ip: "192.168.100.101/24"
-        interface: "eth0"
+          interface: "eth0"
       sonic_image: "sonic-vs.img"
       ports: 32
       port_speed: "10G"
@@ -163,8 +152,7 @@ switches:
       router_id: "2.2.2.2"
       asn: 65102
       management:
-        ip: "192.168.100.102/24"
-        interface: "eth0"
+          interface: "eth0"
       sonic_image: "sonic-vs.img"
       ports: 32
       port_speed: "10G"
@@ -173,8 +161,7 @@ switches:
       router_id: "2.2.2.3"
       asn: 65103
       management:
-        ip: "192.168.100.103/24"
-        interface: "eth0"
+          interface: "eth0"
       sonic_image: "sonic-vs.img"
       ports: 32
       port_speed: "10G"
@@ -183,8 +170,7 @@ switches:
       router_id: "2.2.2.4"
       asn: 65104
       management:
-        ip: "192.168.100.104/24"
-        interface: "eth0"
+          interface: "eth0"
       sonic_image: "sonic-vs.img"
       ports: 32
       port_speed: "10G"
@@ -195,8 +181,7 @@ switches:
       router_id: "3.3.3.1"
       asn: 65201
       management:
-        ip: "192.168.100.201/24"
-        interface: "eth0"
+          interface: "eth0"
       sonic_image: "sonic-vs.img"
       ports: 32
       port_speed: "40G"
@@ -205,8 +190,7 @@ switches:
       router_id: "3.3.3.2"
       asn: 65202
       management:
-        ip: "192.168.100.202/24"
-        interface: "eth0"
+          interface: "eth0"
       sonic_image: "sonic-vs.img"
       ports: 32
       port_speed: "40G"
@@ -217,8 +201,7 @@ switches:
       router_id: "4.4.4.1"
       asn: 65301
       management:
-        ip: "192.168.100.251/24"
-        interface: "eth0"
+          interface: "eth0"
       sonic_image: "sonic-vs.img"
       ports: 64
       port_speed: "100G"
