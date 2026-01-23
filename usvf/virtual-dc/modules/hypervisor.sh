@@ -198,6 +198,10 @@ write_files:
       log syslog informational
       service integrated-vtysh-config
       !
+      ! Configure loopback
+      interface lo
+       ip address $router_id/32
+      !
       ! BGP Configuration with Unnumbered Support
       router bgp $asn
        bgp router-id $router_id
@@ -228,6 +232,8 @@ EOF
         neighbor FABRIC activate
         neighbor FABRIC route-map ALLOW-ALL in
         neighbor FABRIC route-map ALLOW-ALL out
+        ! Advertise loopback network
+        network $router_id/32
         maximum-paths 64
         maximum-paths ibgp 64
        exit-address-family
