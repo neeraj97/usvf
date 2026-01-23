@@ -8,22 +8,81 @@
 # - UDP sockets or veth pairs for VM interconnection
 ################################################################################
 
+# Lookup which P2P network a device interface should connect to
+# Returns: network name (e.g., "dc3-p2p-link-5") or "none" if not found
+lookup_interface_network() {
+    local config_file="$1"
+    local device_name="$2"
+    local interface_name="$3"
+    
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
+    local cable_count=$(yq eval '.cabling | length' "$config_file")
+    
+    # Search through all cables to find this device:interface combination
+    for i in $(seq 0 $((cable_count - 1))); do
+        local src_device=$(yq eval ".cabling[$i].source.device" "$config_file")
+        local src_iface=$(yq eval ".cabling[$i].source.interface" "$config_file")
+        local dst_device=$(yq eval ".cabling[$i].destination.device" "$config_file")
+        local dst_iface=$(yq eval ".cabling[$i].destination.interface" "$config_file")
+        
+        # Check if this cable matches our device:interface
+        if [[ "$src_device" == "$device_name" && "$src_iface" == "$interface_name" ]]; then
+            echo "${dc_name}-p2p-link-${i}"
+            return 0
+        fi
+        
+        if [[ "$dst_device" == "$device_name" && "$dst_iface" == "$interface_name" ]]; then
+            echo "${dc_name}-p2p-link-${i}"
+            return 0
+        fi
+    done
+    
+    # Interface not found in cabling - return "none"
+    echo "none"
+    return 1
+}
+
+# Pre-create all P2P networks BEFORE creating VMs
+# This allows VMs to connect directly to correct networks during creation
+create_p2p_networks() {
+    local config_file="$1"
+    local dry_run="${2:-false}"
+    
+    log_info "Pre-creating all P2P networks for direct VM attachment..."
+    
+    local cable_count=$(yq eval '.cabling | length' "$config_file")
+    local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
+    
+    log_info "Total P2P networks to create: $cable_count"
+    
+    # Create each P2P network
+    for i in $(seq 0 $((cable_count - 1))); do
+        local src_device=$(yq eval ".cabling[$i].source.device" "$config_file")
+        local src_iface=$(yq eval ".cabling[$i].source.interface" "$config_file")
+        local dst_device=$(yq eval ".cabling[$i].destination.device" "$config_file")
+        local dst_iface=$(yq eval ".cabling[$i].destination.interface" "$config_file")
+        local description=$(yq eval ".cabling[$i].description" "$config_file")
+        
+        if [[ "$dry_run" == "true" ]]; then
+            log_info "[DRY RUN] Would create P2P network for: $src_device:$src_iface <-> $dst_device:$dst_iface"
+            continue
+        fi
+        
+        log_info "Creating P2P network $i: $src_device:$src_iface <-> $dst_device:$dst_iface"
+        create_p2p_network "$config_file" "$src_device" "$src_iface" "$dst_device" "$dst_iface" "$i"
+    done
+    
+    log_success "All P2P networks created - VMs can now attach directly"
+}
+
+# Legacy function for backwards compatibility - now just creates networks
 configure_cabling() {
     local config_file="$1"
     local dry_run="${2:-false}"
     
-    log_info "Configuring virtual cabling (L3 data plane)..."
-    
-    local cable_count=$(yq eval '.cabling | length' "$config_file")
-    
-    log_info "Total cable connections to configure: $cable_count"
-    
-    # Configure each cable connection
-    for i in $(seq 0 $((cable_count - 1))); do
-        configure_single_cable "$config_file" "$i" "$dry_run"
-    done
-    
-    log_success "Virtual cabling configuration completed"
+    log_info "Virtual cabling already configured during network creation"
+    log_info "All P2P networks were created before VMs"
+    log_success "Cabling verification complete"
 }
 
 configure_single_cable() {

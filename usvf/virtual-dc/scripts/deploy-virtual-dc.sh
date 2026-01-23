@@ -387,7 +387,7 @@ main() {
     local steps_to_run=()
     
     if [[ "$STEP" == "all" ]]; then
-        steps_to_run=(validate prereqs network hypervisors switches cabling wait-ssh verify)
+        steps_to_run=(validate prereqs network p2p-networks hypervisors switches cabling wait-ssh verify)
     else
         steps_to_run=("$STEP")
     fi
@@ -418,35 +418,43 @@ main() {
                 create_management_network "$CONFIG_FILE" "$DRY_RUN"
                 log_success "Management network created"
                 ;;
+            p2p-networks)
+                if [[ "$VALIDATE_ONLY" == "true" ]]; then
+                    continue
+                fi
+                log_info "═══ Step 4: Pre-Creating P2P Networks ═══"
+                create_p2p_networks "$CONFIG_FILE" "$DRY_RUN"
+                log_success "All P2P networks pre-created"
+                ;;
             hypervisors)
                 if [[ "$VALIDATE_ONLY" == "true" ]]; then
                     continue
                 fi
-                log_info "═══ Step 4: Deploying Hypervisors ═══"
+                log_info "═══ Step 5: Deploying Hypervisors ═══"
                 deploy_hypervisors "$CONFIG_FILE" "$DRY_RUN"
-                log_success "Hypervisors deployed"
+                log_success "Hypervisors deployed (directly connected to P2P networks)"
                 ;;
             switches)
                 if [[ "$VALIDATE_ONLY" == "true" ]]; then
                     continue
                 fi
-                log_info "═══ Step 5: Deploying SONiC Switches ═══"
+                log_info "═══ Step 6: Deploying SONiC Switches ═══"
                 deploy_switches "$CONFIG_FILE" "$DRY_RUN"
-                log_success "Switches deployed"
+                log_success "Switches deployed (directly connected to P2P networks)"
                 ;;
             cabling)
                 if [[ "$VALIDATE_ONLY" == "true" ]]; then
                     continue
                 fi
-                log_info "═══ Step 6: Configuring Virtual Cabling ═══"
+                log_info "═══ Step 7: Verifying Virtual Cabling ═══"
                 configure_cabling "$CONFIG_FILE" "$DRY_RUN"
-                log_success "Cabling configured"
+                log_success "Cabling verified"
                 ;;
             wait-ssh)
                 if [[ "$VALIDATE_ONLY" == "true" ]]; then
                     continue
                 fi
-                log_info "═══ Step 7: Waiting for VMs to be SSH-Accessible ═══"
+                log_info "═══ Step 8: Waiting for VMs to be SSH-Accessible ═══"
                 wait_for_all_vms "$CONFIG_FILE"
                 log_success "All VMs are SSH-accessible and ready"
                 ;;
@@ -454,7 +462,7 @@ main() {
                 if [[ "$VALIDATE_ONLY" == "true" ]]; then
                     continue
                 fi
-                log_info "═══ Step 8: Verifying Deployment ═══"
+                log_info "═══ Step 9: Verifying Deployment ═══"
                 verify_deployment "$CONFIG_FILE"
                 log_success "Deployment verification complete"
                 ;;

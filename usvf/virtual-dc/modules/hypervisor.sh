@@ -417,9 +417,8 @@ create_hypervisor_vm() {
     fi
     
     # Build virt-install command with Ubuntu 24.04 settings
-    # Add management interface (enp1s0) + placeholder data interfaces (enp2s0, enp3s0, etc.)
-    # Data interfaces are initially connected to isolated networks
-    # The cabling module will update them to connect to correct P2P networks
+    # Add management interface (enp1s0) + data interfaces connected to correct P2P networks
+    # P2P networks are pre-created, so we can connect directly
     local cmd="virt-install \
         --name $vm_name \
         --vcpus $cpu \
@@ -434,16 +433,23 @@ create_hypervisor_vm() {
         --import \
         --noautoconsole"
     
-    # Add data plane interfaces in sequential order
+    # Add data plane interfaces in sequential order, connected to correct P2P networks
     # This ensures enp2s0, enp3s0, enp4s0, etc. are in correct PCI slots
-    for i in $(seq 1 $iface_count); do
-        # Initially connect to default network (will be updated by cabling module)
-        cmd="$cmd --network network=default,model=virtio"
+    for i in $(seq 0 $((iface_count - 1))); do
+        local iface_name=$(yq eval ".hypervisors[$index].data_interfaces[$i].name" "$config_file")
+        local p2p_network=$(lookup_interface_network "$config_file" "$hostname" "$iface_name")
+        
+        if [[ "$p2p_network" == "none" ]]; then
+            log_warn "No P2P network found for $hostname:$iface_name, skipping interface"
+            continue
+        fi
+        
+        log_info "  $iface_name → $p2p_network"
+        cmd="$cmd --network network=$p2p_network,model=virtio"
     done
 
     log_info "Executing: virt-install for $vm_name..."
-    log_info "  Creating with $iface_count data interfaces (enp2s0-enp$((iface_count+1))s0)"
-    log_info "  Cabling module will connect them to P2P networks"
+    log_info "  Creating with $iface_count data interfaces directly connected to P2P networks"
     
     # Execute virt-install
     if eval "$cmd"; then
