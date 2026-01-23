@@ -288,7 +288,8 @@
                     1. Drag devices to canvas<br>
                     2. Click "Connect Mode"<br>
                     3. Click devices to connect<br>
-                    4. Generate YAML
+                    4. Click canvas to deselect<br>
+                    5. Generate YAML
                 </div>
                 <div class="device-palette">
                     <div class="device-item hypervisor" draggable="true" ondragstart="drag(event, 'hypervisor')">
@@ -309,7 +310,7 @@
             
             <div class="canvas-container">
                 <svg id="connections-svg"></svg>
-                <div id="topology-canvas" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+                <div id="topology-canvas" ondrop="drop(event)" ondragover="allowDrop(event)" onclick="handleCanvasClick(event)"></div>
             </div>
             
             <div class="properties-panel">
@@ -381,7 +382,12 @@
         function createDevice(type, x, y) {
             deviceCounter[type]++;
             const id = `${type}-${deviceCounter[type]}`;
-            const name = type === 'hypervisor' ? `hv${deviceCounter[type]}` : `${type}-${deviceCounter[type]}`;
+            const name = type === 'hypervisor' ? `hypervisor-${deviceCounter[type]}` : `${type}-${deviceCounter[type]}`;
+            
+            // New router ID format: 10.1.x.x for hypervisors, 10.2.x.x for switches
+            const routerId = type === 'hypervisor' 
+                ? `10.1.0.${deviceCounter[type]}` 
+                : `10.2.0.${deviceCounter[type]}`;
             
             const device = {
                 id: id,
@@ -389,7 +395,7 @@
                 name: name,
                 role: type === 'switch' ? 'leaf' : '',
                 asn: type === 'hypervisor' ? 65000 + deviceCounter[type] : 65100 + deviceCounter[type],
-                routerId: type === 'hypervisor' ? `1.1.1.${deviceCounter[type]}` : `2.2.2.${deviceCounter[type]}`,
+                routerId: routerId,
                 x: x,
                 y: y,
                 interfaces: type === 'hypervisor' ? 2 : 32
@@ -411,7 +417,7 @@
                 <div class="device-icon">${device.type === 'hypervisor' ? '🖥️' : '🔀'}</div>
                 <div class="device-name">${device.name}</div>
                 <div class="device-info">
-                    ASN: ${device.asn}<br>
+                    ${device.role ? device.role + '<br>' : ''}ASN: ${device.asn}<br>
                     RID: ${device.routerId}
                 </div>
             `;
@@ -428,12 +434,19 @@
                 <div class="device-icon">${device.type === 'hypervisor' ? '🖥️' : '🔀'}</div>
                 <div class="device-name">${device.name}</div>
                 <div class="device-info">
-                    ASN: ${device.asn}<br>
+                    ${device.role ? device.role + '<br>' : ''}ASN: ${device.asn}<br>
                     RID: ${device.routerId}
                 </div>
             `;
             elem.onclick = (e) => handleDeviceClick(device, e);
             elem.onmousedown = (e) => startDrag(device, e);
+        }
+        
+        function handleCanvasClick(e) {
+            // Only deselect if clicking directly on canvas (not on a device)
+            if (e.target.id === 'topology-canvas') {
+                deselectDevice();
+            }
         }
         
         function handleDeviceClick(device, e) {
@@ -461,7 +474,8 @@
             }
             
             selectedDevice = device;
-            document.getElementById(device.id).classList.add('selected');
+            const elem = document.getElementById(device.id);
+            if (elem) elem.classList.add('selected');
             
             // Show properties
             document.getElementById('no-selection').style.display = 'none';
@@ -471,6 +485,17 @@
             document.getElementById('prop-role').value = device.role || '';
             document.getElementById('prop-asn').value = device.asn;
             document.getElementById('prop-router-id').value = device.routerId;
+        }
+        
+        function deselectDevice() {
+            if (selectedDevice) {
+                const elem = document.getElementById(selectedDevice.id);
+                if (elem) elem.classList.remove('selected');
+                selectedDevice = null;
+            }
+            
+            document.getElementById('no-selection').style.display = 'block';
+            document.getElementById('device-properties').style.display = 'none';
         }
         
         function updateSelectedDevice() {
@@ -497,7 +522,8 @@
             );
             
             // Remove from DOM
-            document.getElementById(selectedDevice.id).remove();
+            const elem = document.getElementById(selectedDevice.id);
+            if (elem) elem.remove();
             
             selectedDevice = null;
             document.getElementById('no-selection').style.display = 'block';
@@ -508,11 +534,23 @@
         }
         
         function createConnection(source, dest) {
+            // Determine interface names based on ALL existing connections (source OR destination)
+            // This ensures unique interface names for each device
+            const sourceConnCount = connections.filter(c => 
+                c.source.id === source.id || c.destination.id === source.id
+            ).length;
+            const destConnCount = connections.filter(c => 
+                c.source.id === dest.id || c.destination.id === dest.id
+            ).length;
+            
+            const sourceInterface = `enp${sourceConnCount + 2}s0`; // Start from enp2s0 (enp1s0 is mgmt)
+            const destInterface = `enp${destConnCount + 2}s0`;
+            
             const conn = {
                 source: source,
                 destination: dest,
-                sourceInterface: `eth${connections.filter(c => c.source.id === source.id).length + 1}`,
-                destInterface: dest.type === 'switch' ? `Ethernet${connections.filter(c => c.destination.id === dest.id).length + 1}` : `eth${connections.filter(c => c.destination.id === dest.id).length + 1}`
+                sourceInterface: sourceInterface,
+                destInterface: destInterface
             };
             
             connections.push(conn);
@@ -547,9 +585,8 @@
                     line.setAttribute('y2', y2);
                     line.setAttribute('data-conn-idx', idx);
                     line.style.pointerEvents = 'stroke';
-                    line.style.strokeWidth = '8'; // Wider invisible stroke for easier clicking
+                    line.style.strokeWidth = '8';
                     
-                    // Create a visible line on top
                     const visibleLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                     visibleLine.setAttribute('class', 'connection-line');
                     visibleLine.setAttribute('x1', x1);
@@ -594,7 +631,8 @@
                 btn.textContent = '🔗 Connect Mode';
                 btn.parentElement.classList.remove('connection-mode');
                 if (connectionStart) {
-                    document.getElementById(connectionStart.id).style.boxShadow = '';
+                    const elem = document.getElementById(connectionStart.id);
+                    if (elem) elem.style.boxShadow = '';
                     connectionStart = null;
                 }
             }
@@ -625,65 +663,172 @@
         }
         
         function buildYAML() {
-            let yaml = `# Auto-generated topology configuration\n`;
+            let yaml = `# Auto-generated Virtual DC Topology Configuration\n`;
             yaml += `# Generated: ${new Date().toISOString()}\n\n`;
+            
             yaml += `global:\n`;
-            yaml += `  datacenter_name: "graphical-dc"\n`;
+            yaml += `  datacenter_name: "virtual-dc-lab"\n`;
             yaml += `  virtualization_platform: "kvm"\n`;
-            yaml += `  management_network:\n`;
-            yaml += `    subnet: "192.168.100.0/24"\n`;
-            yaml += `    gateway: "192.168.100.1"\n\n`;
+            yaml += `  bgp_defaults:\n`;
+            yaml += `    unnumbered: true\n`;
+            yaml += `    ebgp_multihop: 1\n\n`;
             
             // Hypervisors
             yaml += `hypervisors:\n`;
             const hypervisors = devices.filter(d => d.type === 'hypervisor');
-            hypervisors.forEach((hv, idx) => {
-                yaml += `  - name: "${hv.name}"\n`;
-                yaml += `    short_name: "${hv.name}"\n`;
-                yaml += `    router_id: "${hv.routerId}"\n`;
-                yaml += `    asn: ${hv.asn}\n`;
-                yaml += `    management:\n`;
-                yaml += `      ip: "192.168.100.${11 + idx}/24"\n`;
-                yaml += `    data_interfaces:\n`;
-                
-                const hvConns = connections.filter(c => c.source.id === hv.id);
-                hvConns.forEach(conn => {
-                    yaml += `      - name: "${conn.sourceInterface}"\n`;
-                    yaml += `        description: "To ${conn.destination.name}"\n`;
+            if (hypervisors.length === 0) {
+                yaml += `  []\n\n`;
+            } else {
+                hypervisors.forEach((hv, idx) => {
+                    yaml += `  - name: "${hv.name}"\n`;
+                    yaml += `    short_name: "hv${idx + 1}"\n`;
+                    yaml += `    router_id: "${hv.routerId}"\n`;
+                    yaml += `    asn: ${hv.asn}\n`;
+                    yaml += `    management:\n`;
+                    yaml += `      interface: "enp1s0"\n`;
+                    yaml += `    data_interfaces:\n`;
+                    
+                    // Get connections where hypervisor is either source or destination
+                    const hvConns = connections.filter(c => c.source.id === hv.id || c.destination.id === hv.id);
+                    if (hvConns.length === 0) {
+                        yaml += `      []\n`;
+                    } else {
+                        hvConns.forEach(conn => {
+                            const iface = conn.source.id === hv.id ? conn.sourceInterface : conn.destInterface;
+                            const peer = conn.source.id === hv.id ? conn.destination.name : conn.source.name;
+                            yaml += `      - name: "${iface}"\n`;
+                            yaml += `        description: "Connection to ${peer}"\n`;
+                        });
+                    }
+                    
+                    yaml += `    resources:\n`;
+                    yaml += `      cpu: 1\n`;
+                    yaml += `      memory: 1024\n`;
+                    yaml += `      disk: 5\n\n`;
                 });
-                
-                yaml += `    resources:\n`;
-                yaml += `      cpu: 4\n`;
-                yaml += `      memory: 4096\n`;
-                yaml += `      disk: 50\n\n`;
-            });
+            }
             
-            // Switches
+            // Switches - organized by tier
             yaml += `switches:\n`;
             const switches = devices.filter(d => d.type === 'switch');
-            switches.forEach((sw, idx) => {
-                yaml += `  - name: "${sw.name}"\n`;
-                yaml += `    device_type: "switch"\n`;
-                yaml += `    role: "${sw.role || 'leaf'}"\n`;
-                yaml += `    router_id: "${sw.routerId}"\n`;
-                yaml += `    asn: ${sw.asn}\n`;
-                yaml += `    management:\n`;
-                yaml += `      ip: "192.168.100.${101 + idx}/24"\n`;
-                yaml += `    ports: 32\n`;
-                yaml += `    port_speed: "10G"\n\n`;
-            });
+            
+            // Group switches by role
+            const leafSwitches = switches.filter(sw => sw.role === 'leaf');
+            const spineSwitches = switches.filter(sw => sw.role === 'spine');
+            const superspineSwitches = switches.filter(sw => sw.role === 'superspine');
+            
+            // Leaf switches
+            yaml += `  leaf:\n`;
+            if (leafSwitches.length === 0) {
+                yaml += `    []\n`;
+            } else {
+                leafSwitches.forEach((sw, idx) => {
+                    yaml += `    - name: "${sw.name}"\n`;
+                    yaml += `      router_id: "${sw.routerId}"\n`;
+                    yaml += `      asn: ${sw.asn}\n`;
+                    yaml += `      management:\n`;
+                    yaml += `        interface: "enp1s0"\n`;
+                    yaml += `      data_interfaces:\n`;
+                    
+                    const swConns = connections.filter(c => c.source.id === sw.id || c.destination.id === sw.id);
+                    if (swConns.length === 0) {
+                        yaml += `        []\n`;
+                    } else {
+                        swConns.forEach(conn => {
+                            const iface = conn.source.id === sw.id ? conn.sourceInterface : conn.destInterface;
+                            const peer = conn.source.id === sw.id ? conn.destination.name : conn.source.name;
+                            yaml += `        - name: "${iface}"\n`;
+                            yaml += `          description: "Connection to ${peer}"\n`;
+                        });
+                    }
+                    
+                    yaml += `      resources:\n`;
+                    yaml += `        cpu: 2\n`;
+                    yaml += `        memory: 2048\n`;
+                    yaml += `        disk: 10\n\n`;
+                });
+            }
+            
+            // Spine switches
+            yaml += `  spine:\n`;
+            if (spineSwitches.length === 0) {
+                yaml += `    []\n`;
+            } else {
+                spineSwitches.forEach((sw, idx) => {
+                    yaml += `    - name: "${sw.name}"\n`;
+                    yaml += `      router_id: "${sw.routerId}"\n`;
+                    yaml += `      asn: ${sw.asn}\n`;
+                    yaml += `      management:\n`;
+                    yaml += `        interface: "enp1s0"\n`;
+                    yaml += `      data_interfaces:\n`;
+                    
+                    const swConns = connections.filter(c => c.source.id === sw.id || c.destination.id === sw.id);
+                    if (swConns.length === 0) {
+                        yaml += `        []\n`;
+                    } else {
+                        swConns.forEach(conn => {
+                            const iface = conn.source.id === sw.id ? conn.sourceInterface : conn.destInterface;
+                            const peer = conn.source.id === sw.id ? conn.destination.name : conn.source.name;
+                            yaml += `        - name: "${iface}"\n`;
+                            yaml += `          description: "Connection to ${peer}"\n`;
+                        });
+                    }
+                    
+                    yaml += `      resources:\n`;
+                    yaml += `        cpu: 2\n`;
+                    yaml += `        memory: 2048\n`;
+                    yaml += `        disk: 10\n\n`;
+                });
+            }
+            
+            // Superspine switches
+            yaml += `  superspine:\n`;
+            if (superspineSwitches.length === 0) {
+                yaml += `    []\n\n`;
+            } else {
+                superspineSwitches.forEach((sw, idx) => {
+                    yaml += `    - name: "${sw.name}"\n`;
+                    yaml += `      router_id: "${sw.routerId}"\n`;
+                    yaml += `      asn: ${sw.asn}\n`;
+                    yaml += `      management:\n`;
+                    yaml += `        interface: "enp1s0"\n`;
+                    yaml += `      data_interfaces:\n`;
+                    
+                    const swConns = connections.filter(c => c.source.id === sw.id || c.destination.id === sw.id);
+                    if (swConns.length === 0) {
+                        yaml += `        []\n`;
+                    } else {
+                        swConns.forEach(conn => {
+                            const iface = conn.source.id === sw.id ? conn.sourceInterface : conn.destInterface;
+                            const peer = conn.source.id === sw.id ? conn.destination.name : conn.source.name;
+                            yaml += `        - name: "${iface}"\n`;
+                            yaml += `          description: "Connection to ${peer}"\n`;
+                        });
+                    }
+                    
+                    yaml += `      resources:\n`;
+                    yaml += `        cpu: 2\n`;
+                    yaml += `        memory: 2048\n`;
+                    yaml += `        disk: 10\n\n`;
+                });
+            }
             
             // Cabling
             yaml += `cabling:\n`;
-            connections.forEach(conn => {
-                yaml += `  - source:\n`;
-                yaml += `      device: "${conn.source.name}"\n`;
-                yaml += `      interface: "${conn.sourceInterface}"\n`;
-                yaml += `    destination:\n`;
-                yaml += `      device: "${conn.destination.name}"\n`;
-                yaml += `      interface: "${conn.destInterface}"\n`;
-                yaml += `    link_type: "p2p"\n\n`;
-            });
+            if (connections.length === 0) {
+                yaml += `  []\n`;
+            } else {
+                connections.forEach(conn => {
+                    yaml += `  - source:\n`;
+                    yaml += `      device: "${conn.source.name}"\n`;
+                    yaml += `      interface: "${conn.sourceInterface}"\n`;
+                    yaml += `    destination:\n`;
+                    yaml += `      device: "${conn.destination.name}"\n`;
+                    yaml += `      interface: "${conn.destInterface}"\n`;
+                    yaml += `    link_type: "p2p"\n`;
+                    yaml += `    description: "${conn.source.name} to ${conn.destination.name}"\n\n`;
+                });
+            }
             
             return yaml;
         }

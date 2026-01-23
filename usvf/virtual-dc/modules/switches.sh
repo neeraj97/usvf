@@ -236,8 +236,13 @@ EOF
     cat >> "$cloud_init_dir/user-data" <<EOF
        address-family ipv4 unicast
         neighbor FABRIC activate
+        neighbor FABRIC route-map ALLOW-ALL in
+        neighbor FABRIC route-map ALLOW-ALL out
         maximum-paths 64
        exit-address-family
+      !
+      ! Route maps
+      route-map ALLOW-ALL permit 10
       !
       line vty
       !

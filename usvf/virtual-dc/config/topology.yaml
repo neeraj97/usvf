@@ -1,513 +1,154 @@
-# Virtual DC Topology Configuration
-# This file defines the complete virtual datacenter setup including:
-# - Hypervisors (VMs running as hypervisors with BGP routers)
-# - FRR Switches (Leaf/Spine/SuperSpine)
-# - Cabling layout
-# - BGP configuration with unnumbered interfaces
-
-################################################################################
-# VISUAL TOPOLOGY (ASCII Art)
-################################################################################
-# Use this section to visually design your datacenter topology
-# Supported node types: HYPERVISOR, LEAF, SPINE, SUPERSPINE, MGMT_SWITCH
-################################################################################
-
-topology_visual: |
-  
-  ┌─────────────────────── VIRTUAL DATACENTER ───────────────────────┐
-  │                                                                   │
-  │                         [SuperSpine-1]                            │
-  │                         /            \                            │
-  │                        /              \                           │
-  │                  [Spine-1]          [Spine-2]                     │
-  │                   /    \              /    \                      │
-  │                  /      \            /      \                     │
-  │            [Leaf-1]   [Leaf-2]  [Leaf-3]  [Leaf-4]               │
-  │              / \         / \        / \       / \                 │
-  │             /   \       /   \      /   \     /   \                │
-  │           HV1  HV2    HV3  HV4   HV5  HV6  HV7  HV8              │
-  │            |    |      |    |     |    |    |    |                │
-  │            └────┴──────┴────┴─────┴────┴────┴────┘                │
-  │                    [Management Switch]                            │
-  │                                                                   │
-  └───────────────────────────────────────────────────────────────────┘
-
-################################################################################
-# GLOBAL SETTINGS
-################################################################################
+# Auto-generated Virtual DC Topology Configuration
+# Generated: 2026-01-23T19:22:30.753Z
 
 global:
   datacenter_name: "virtual-dc-lab"
-  virtualization_platform: "kvm"  # kvm, virtualbox, vmware
-
-  # Management network is automatically created and managed by vdc-manager.sh
-  # No manual configuration needed - subnet and gateway are auto-assigned
-  
-  # Default BGP settings
+  virtualization_platform: "kvm"
   bgp_defaults:
-    unnumbered: true  # Use BGP unnumbered for data plane
+    unnumbered: true
     ebgp_multihop: 1
-    timers:
-      keepalive: 3
-      holdtime: 9
-  
-  # KVM specific settings
-  kvm_settings:
-    base_image: "ubuntu-22.04-server-cloudimg-amd64.img"
-    cpu: 2
-    memory: 2048  # MB
-    disk_size: 20  # GB
-
-################################################################################
-# HYPERVISORS DEFINITION
-################################################################################
-# Each hypervisor is a VM that acts as a compute node with BGP routing
-################################################################################
 
 hypervisors:
   - name: "hypervisor-1"
     short_name: "hv1"
-    router_id: "1.1.1.1"
+    router_id: "10.1.0.1"
     asn: 65001
     management:
-      interface: "enp1s0"  # First virtio NIC
-      # IP is auto-assigned by vdc-manager (continuous allocation starting from .11)
+      interface: "enp1s0"
     data_interfaces:
-      - name: "enp2s0"  # Second virtio NIC
-        description: "Connection to Leaf-1"
-      - name: "enp3s0"  # Third virtio NIC
-        description: "Connection to Leaf-2"
+      - name: "enp2s0"
+        description: "Connection to switch-1"
     resources:
       cpu: 1
       memory: 1024
       disk: 5
-  
+
   - name: "hypervisor-2"
     short_name: "hv2"
-    router_id: "1.1.1.2"
+    router_id: "10.1.0.2"
     asn: 65002
     management:
       interface: "enp1s0"
     data_interfaces:
       - name: "enp2s0"
-        description: "Connection to Leaf-1"
-      - name: "enp3s0"
-        description: "Connection to Leaf-2"
+        description: "Connection to switch-1"
     resources:
       cpu: 1
       memory: 1024
       disk: 5
-  
+
   - name: "hypervisor-3"
     short_name: "hv3"
-    router_id: "1.1.1.3"
+    router_id: "10.1.0.3"
     asn: 65003
     management:
       interface: "enp1s0"
     data_interfaces:
       - name: "enp2s0"
-        description: "Connection to Leaf-2"
-      - name: "enp3s0"
-        description: "Connection to Leaf-3"
+        description: "Connection to switch-2"
     resources:
       cpu: 1
       memory: 1024
       disk: 5
-  
+
   - name: "hypervisor-4"
     short_name: "hv4"
-    router_id: "1.1.1.4"
+    router_id: "10.1.0.4"
     asn: 65004
     management:
       interface: "enp1s0"
     data_interfaces:
       - name: "enp2s0"
-        description: "Connection to Leaf-2"
-      - name: "enp3s0"
-        description: "Connection to Leaf-3"
+        description: "Connection to switch-2"
     resources:
       cpu: 1
       memory: 1024
       disk: 5
 
-################################################################################
-# SWITCHES DEFINITION
-################################################################################
-# FRR switches organized by tier (Leaf, Spine, SuperSpine)
-# Each switch is an Ubuntu VM with FRRouting, similar to hypervisors
-################################################################################
-
 switches:
-  # Leaf Switches (ToR - Top of Rack)
   leaf:
-    - name: "leaf-1"
-      router_id: "2.2.2.1"
+    - name: "switch-1"
+      router_id: "10.2.0.1"
       asn: 65101
       management:
-          interface: "enp1s0"
+        interface: "enp1s0"
       data_interfaces:
         - name: "enp2s0"
-          description: "Connection to hypervisor-1"
-        - name: "enp3s0"
           description: "Connection to hypervisor-2"
+        - name: "enp3s0"
+          description: "Connection to hypervisor-1"
         - name: "enp4s0"
-          description: "Connection to spine-1"
-        - name: "enp5s0"
-          description: "Connection to spine-2"
+          description: "Connection to switch-2"
       resources:
         cpu: 2
         memory: 2048
         disk: 10
 
-    - name: "leaf-2"
-      router_id: "2.2.2.2"
+    - name: "switch-2"
+      router_id: "10.2.0.2"
       asn: 65102
       management:
-          interface: "enp1s0"
-      data_interfaces:
-        - name: "enp2s0"
-          description: "Connection to hypervisor-1"
-        - name: "enp3s0"
-          description: "Connection to hypervisor-3"
-        - name: "enp4s0"
-          description: "Connection to spine-1"
-        - name: "enp5s0"
-          description: "Connection to spine-2"
-      resources:
-        cpu: 2
-        memory: 2048
-        disk: 10
-
-    - name: "leaf-3"
-      router_id: "2.2.2.3"
-      asn: 65103
-      management:
-          interface: "enp1s0"
-      data_interfaces:
-        - name: "enp2s0"
-          description: "Connection to hypervisor-2"
-        - name: "enp3s0"
-          description: "Connection to hypervisor-4"
-        - name: "enp4s0"
-          description: "Connection to spine-1"
-        - name: "enp5s0"
-          description: "Connection to spine-2"
-      resources:
-        cpu: 2
-        memory: 2048
-        disk: 10
-
-    - name: "leaf-4"
-      router_id: "2.2.2.4"
-      asn: 65104
-      management:
-          interface: "enp1s0"
+        interface: "enp1s0"
       data_interfaces:
         - name: "enp2s0"
           description: "Connection to hypervisor-3"
         - name: "enp3s0"
           description: "Connection to hypervisor-4"
         - name: "enp4s0"
-          description: "Connection to spine-1"
-        - name: "enp5s0"
-          description: "Connection to spine-2"
+          description: "Connection to switch-1"
       resources:
         cpu: 2
         memory: 2048
         disk: 10
 
-  # Spine Switches
   spine:
-    - name: "spine-1"
-      router_id: "3.3.3.1"
-      asn: 65201
-      management:
-          interface: "enp1s0"
-      data_interfaces:
-        - name: "enp2s0"
-          description: "Connection to leaf-1"
-        - name: "enp3s0"
-          description: "Connection to leaf-2"
-        - name: "enp4s0"
-          description: "Connection to leaf-3"
-        - name: "enp5s0"
-          description: "Connection to leaf-4"
-        - name: "enp6s0"
-          description: "Connection to superspine-1"
-      resources:
-        cpu: 2
-        memory: 2048
-        disk: 10
-
-    - name: "spine-2"
-      router_id: "3.3.3.2"
-      asn: 65202
-      management:
-          interface: "enp1s0"
-      data_interfaces:
-        - name: "enp2s0"
-          description: "Connection to leaf-1"
-        - name: "enp3s0"
-          description: "Connection to leaf-2"
-        - name: "enp4s0"
-          description: "Connection to leaf-3"
-        - name: "enp5s0"
-          description: "Connection to leaf-4"
-        - name: "enp6s0"
-          description: "Connection to superspine-1"
-      resources:
-        cpu: 2
-        memory: 2048
-        disk: 10
-
-  # SuperSpine Switches (Optional - for large deployments)
+    []
   superspine:
-    - name: "superspine-1"
-      router_id: "4.4.4.1"
-      asn: 65301
-      management:
-          interface: "enp1s0"
-      data_interfaces:
-        - name: "enp2s0"
-          description: "Connection to spine-1"
-        - name: "enp3s0"
-          description: "Connection to spine-2"
-      resources:
-        cpu: 2
-        memory: 2048
-        disk: 10
-
-################################################################################
-# MANAGEMENT NETWORK
-################################################################################
-# L2 management network connecting all devices
-################################################################################
-
-management_network:
-  - name: "mgmt-switch-1"
-    type: "linux_bridge"  # linux_bridge or openvswitch
-    interfaces:
-      - "hv1-eth0"
-      - "hv2-eth0"
-      - "hv3-eth0"
-      - "hv4-eth0"
-      - "leaf-1-eth0"
-      - "leaf-2-eth0"
-      - "leaf-3-eth0"
-      - "leaf-4-eth0"
-      - "spine-1-eth0"
-      - "spine-2-eth0"
-      - "superspine-1-eth0"
-
-################################################################################
-# CABLING LAYOUT (Data Plane - L3)
-################################################################################
-# Define point-to-point connections between devices
-# Format: source_device:source_port -> destination_device:destination_port
-################################################################################
+    []
 
 cabling:
-  # Hypervisor to Leaf connections
+  - source:
+      device: "switch-1"
+      interface: "enp2s0"
+    destination:
+      device: "hypervisor-2"
+      interface: "enp2s0"
+    link_type: "p2p"
+    description: "switch-1 to hypervisor-2"
+
   - source:
       device: "hypervisor-1"
       interface: "enp2s0"
     destination:
-      device: "leaf-1"
-      interface: "enp2s0"
-    link_type: "p2p"
-    description: "HV1 to Leaf-1"
-
-  - source:
-      device: "hypervisor-1"
-      interface: "enp3s0"
-    destination:
-      device: "leaf-2"
-      interface: "enp2s0"
-    link_type: "p2p"
-    description: "HV1 to Leaf-2"
-
-  - source:
-      device: "hypervisor-2"
-      interface: "enp2s0"
-    destination:
-      device: "leaf-1"
+      device: "switch-1"
       interface: "enp3s0"
     link_type: "p2p"
-    description: "HV2 to Leaf-1"
+    description: "hypervisor-1 to switch-1"
 
   - source:
-      device: "hypervisor-2"
-      interface: "enp3s0"
-    destination:
-      device: "leaf-3"
+      device: "switch-2"
       interface: "enp2s0"
-    link_type: "p2p"
-    description: "HV2 to Leaf-3"
-
-  - source:
+    destination:
       device: "hypervisor-3"
       interface: "enp2s0"
-    destination:
-      device: "leaf-2"
-      interface: "enp3s0"
     link_type: "p2p"
-    description: "HV3 to Leaf-2"
-
-  - source:
-      device: "hypervisor-3"
-      interface: "enp3s0"
-    destination:
-      device: "leaf-4"
-      interface: "enp2s0"
-    link_type: "p2p"
-    description: "HV3 to Leaf-4"
+    description: "switch-2 to hypervisor-3"
 
   - source:
       device: "hypervisor-4"
       interface: "enp2s0"
     destination:
-      device: "leaf-3"
+      device: "switch-2"
       interface: "enp3s0"
     link_type: "p2p"
-    description: "HV4 to Leaf-3"
+    description: "hypervisor-4 to switch-2"
 
   - source:
-      device: "hypervisor-4"
-      interface: "enp3s0"
-    destination:
-      device: "leaf-4"
-      interface: "enp3s0"
-    link_type: "p2p"
-    description: "HV4 to Leaf-4"
-
-  # Leaf to Spine connections
-  - source:
-      device: "leaf-1"
+      device: "switch-1"
       interface: "enp4s0"
     destination:
-      device: "spine-1"
-      interface: "enp2s0"
-    link_type: "p2p"
-    description: "Leaf-1 to Spine-1"
-
-  - source:
-      device: "leaf-1"
-      interface: "enp5s0"
-    destination:
-      device: "spine-2"
-      interface: "enp2s0"
-    link_type: "p2p"
-    description: "Leaf-1 to Spine-2"
-
-  - source:
-      device: "leaf-2"
-      interface: "enp4s0"
-    destination:
-      device: "spine-1"
-      interface: "enp3s0"
-    link_type: "p2p"
-    description: "Leaf-2 to Spine-1"
-
-  - source:
-      device: "leaf-2"
-      interface: "enp5s0"
-    destination:
-      device: "spine-2"
-      interface: "enp3s0"
-    link_type: "p2p"
-    description: "Leaf-2 to Spine-2"
-
-  - source:
-      device: "leaf-3"
-      interface: "enp4s0"
-    destination:
-      device: "spine-1"
+      device: "switch-2"
       interface: "enp4s0"
     link_type: "p2p"
-    description: "Leaf-3 to Spine-1"
+    description: "switch-1 to switch-2"
 
-  - source:
-      device: "leaf-3"
-      interface: "enp5s0"
-    destination:
-      device: "spine-2"
-      interface: "enp4s0"
-    link_type: "p2p"
-    description: "Leaf-3 to Spine-2"
-
-  - source:
-      device: "leaf-4"
-      interface: "enp4s0"
-    destination:
-      device: "spine-1"
-      interface: "enp5s0"
-    link_type: "p2p"
-    description: "Leaf-4 to Spine-1"
-
-  - source:
-      device: "leaf-4"
-      interface: "enp5s0"
-    destination:
-      device: "spine-2"
-      interface: "enp5s0"
-    link_type: "p2p"
-    description: "Leaf-4 to Spine-2"
-
-  # Spine to SuperSpine connections
-  - source:
-      device: "spine-1"
-      interface: "enp6s0"
-    destination:
-      device: "superspine-1"
-      interface: "enp2s0"
-    link_type: "p2p"
-    description: "Spine-1 to SuperSpine-1"
-
-  - source:
-      device: "spine-2"
-      interface: "enp6s0"
-    destination:
-      device: "superspine-1"
-      interface: "enp3s0"
-    link_type: "p2p"
-    description: "Spine-2 to SuperSpine-1"
-
-################################################################################
-# BGP CONFIGURATION
-################################################################################
-# BGP unnumbered configuration for all devices
-################################################################################
-
-bgp_config:
-  # Global BGP settings
-  global_settings:
-    unnumbered: true
-    ipv4_unicast: true
-    ipv6_unicast: false
-    ebgp_requires_policy: false
-  
-  # BGP communities (optional)
-  communities:
-    - name: "datacenter"
-      value: "65000:100"
-    - name: "hypervisor"
-      value: "65000:200"
-    - name: "leaf"
-      value: "65000:300"
-    - name: "spine"
-      value: "65000:400"
-  
-  # Route redistribution
-  redistribute:
-    - protocol: "connected"
-    - protocol: "static"
-
-################################################################################
-# VALIDATION RULES
-################################################################################
-
-validation:
-  check_duplicate_ips: true
-  check_duplicate_asn: false  # Allow duplicate ASN for iBGP
-  check_cable_consistency: true
-  check_router_id_uniqueness: true
