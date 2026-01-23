@@ -297,7 +297,7 @@ docker exec sonic-vs vtysh -c "configure terminal" \\
     -c "  maximum-paths 64" \\
     -c " exit-address-family" \\
     -c "exit" \\
-    -c "write memory"
+    -c "write"
 
 echo ""
 echo "✓ SONiC switch is ready! BGP is running inside SONiC container."
