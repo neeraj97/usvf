@@ -166,29 +166,32 @@ destroy_vdc_cloud_init() {
 
 show_vdc_status() {
     local vdc_name="$1"
-    
+
     log_info "═══════════════════════════════════════════════════════════"
     log_info "         STATUS: Virtual Datacenter '$vdc_name'"
     log_info "═══════════════════════════════════════════════════════════"
     echo ""
-    
+
     # Get VDC info from registry
     local vdc_info=$(get_vdc_info "$vdc_name")
     local namespace=$(echo "$vdc_info" | jq -r '.namespace')
     local created_at=$(echo "$vdc_info" | jq -r '.created_at')
     local mgmt_subnet=$(echo "$vdc_info" | jq -r '.management_subnet')
-    
+
+    # Load topology config for management IPs
+    local config_file="$PROJECT_ROOT/config/vdc-${vdc_name}/topology.yaml"
+
     echo "VDC Name:          $vdc_name"
     echo "Namespace:         $namespace"
     echo "Created:           $created_at"
     echo "Management Subnet: $mgmt_subnet"
     echo ""
-    
+
     # Check namespace status
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "NETWORK NAMESPACE STATUS"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
+
     if ip netns list 2>/dev/null | grep -q "^${namespace}"; then
         echo "Status: ✓ Active"
         echo ""
@@ -198,44 +201,73 @@ show_vdc_status() {
         echo "Status: ✗ Not found"
     fi
     echo ""
-    
-    # VM Status
+
+    # VM Status with Management IPs from topology
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "VIRTUAL MACHINES"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
+
     local all_vms=$(virsh list --all --name 2>/dev/null | grep "^${vdc_name}-" || true)
-    
+
     if [[ -z "$all_vms" ]]; then
         echo "No VMs found"
     else
-        printf "%-30s %-15s %-10s %-10s\n" "VM NAME" "STATE" "CPU" "MEMORY"
-        printf "%-30s %-15s %-10s %-10s\n" "-------" "-----" "---" "------"
-        
+        printf "%-25s %-12s %-6s %-12s %-20s\n" "VM NAME" "STATE" "CPU" "MEMORY" "MANAGEMENT IP"
+        printf "%-25s %-12s %-6s %-12s %-20s\n" "-------" "-----" "---" "------" "-------------"
+
         while IFS= read -r vm; do
             if [[ -n "$vm" ]]; then
                 local state=$(virsh domstate "$vm" 2>/dev/null || echo "unknown")
                 local vcpu=$(virsh dominfo "$vm" 2>/dev/null | grep "CPU(s):" | awk '{print $2}' || echo "-")
                 local mem=$(virsh dominfo "$vm" 2>/dev/null | grep "Max memory:" | awk '{print $3 " " $4}' || echo "-")
-                printf "%-30s %-15s %-10s %-10s\n" "$vm" "$state" "$vcpu" "$mem"
+
+                # Get management IP from topology config
+                local mgmt_ip="-"
+                if [[ -f "$config_file" ]]; then
+                    # Extract device name without VDC prefix
+                    local device_name="${vm#${vdc_name}-}"
+
+                    # Try to find in hypervisors
+                    mgmt_ip=$(yq eval ".hypervisors[] | select(.name == \"$device_name\") | .management.ip" "$config_file" 2>/dev/null)
+
+                    # Try leaf switches if not found
+                    if [[ -z "$mgmt_ip" || "$mgmt_ip" == "null" ]]; then
+                        mgmt_ip=$(yq eval ".switches.leaf[] | select(.name == \"$device_name\") | .management.ip" "$config_file" 2>/dev/null)
+                    fi
+
+                    # Try spine switches if not found
+                    if [[ -z "$mgmt_ip" || "$mgmt_ip" == "null" ]]; then
+                        mgmt_ip=$(yq eval ".switches.spine[] | select(.name == \"$device_name\") | .management.ip" "$config_file" 2>/dev/null)
+                    fi
+
+                    # Try superspine switches if not found
+                    if [[ -z "$mgmt_ip" || "$mgmt_ip" == "null" ]]; then
+                        mgmt_ip=$(yq eval ".switches.superspine[] | select(.name == \"$device_name\") | .management.ip" "$config_file" 2>/dev/null)
+                    fi
+
+                    # Set to - if still not found
+                    [[ -z "$mgmt_ip" || "$mgmt_ip" == "null" ]] && mgmt_ip="-"
+                fi
+
+                printf "%-25s %-12s %-6s %-12s %-20s\n" "$vm" "$state" "$vcpu" "$mem" "$mgmt_ip"
             fi
         done <<< "$all_vms"
     fi
     echo ""
-    
+
     # Network Status
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "VIRTUAL NETWORKS"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
+
     local all_networks=$(virsh net-list --all --name 2>/dev/null | grep "^${vdc_name}-" || true)
-    
+
     if [[ -z "$all_networks" ]]; then
         echo "No networks found"
     else
         printf "%-30s %-15s %-20s\n" "NETWORK NAME" "STATE" "BRIDGE"
         printf "%-30s %-15s %-20s\n" "------------" "-----" "------"
-        
+
         while IFS= read -r network; do
             if [[ -n "$network" ]]; then
                 local state=$(virsh net-info "$network" 2>/dev/null | grep "Active:" | awk '{print $2}' || echo "unknown")
@@ -245,7 +277,7 @@ show_vdc_status() {
         done <<< "$all_networks"
     fi
     echo ""
-    
+
     log_info "═══════════════════════════════════════════════════════════"
 }
 
@@ -397,7 +429,7 @@ show_vdc_topology() {
 
 generate_topology_diagram() {
     local config_file="$1"
-    local width=70
+    local width=76
 
     # Collect devices by tier
     local -a superspines=()
@@ -433,27 +465,19 @@ generate_topology_diagram() {
         [[ -n "$name" && "$name" != "null" ]] && hypervisors+=("$name")
     done
 
-    # Build connection map from cabling
-    declare -A connections
     local cabling_count=$(yq eval '.cabling | length' "$config_file" 2>/dev/null || echo "0")
-    for i in $(seq 0 $((cabling_count - 1))); do
-        local src=$(yq eval ".cabling[$i].source.device" "$config_file" 2>/dev/null)
-        local dst=$(yq eval ".cabling[$i].destination.device" "$config_file" 2>/dev/null)
-        connections["$src"]+="$dst "
-        connections["$dst"]+="$src "
-    done
 
     # Get datacenter name
     local dc_name=$(yq eval '.global.datacenter_name // "Virtual DC"' "$config_file" 2>/dev/null)
 
     # Draw top border with title
-    local title="VIRTUAL DATACENTER: $dc_name"
+    local title=" $dc_name "
     local title_len=${#title}
-    local padding=$(( (width - title_len - 2) / 2 ))
-    local padding_right=$(( width - title_len - padding - 2 ))
+    local padding=$(( (width - title_len) / 2 ))
+    local padding_right=$(( width - title_len - padding ))
 
-    echo "┌$(printf '─%.0s' $(seq 1 $padding))$title$(printf '─%.0s' $(seq 1 $padding_right))┐"
-    echo "│$(printf ' %.0s' $(seq 1 $((width))))│"
+    echo "╔$(printf '═%.0s' $(seq 1 $padding))$title$(printf '═%.0s' $(seq 1 $padding_right))╗"
+    echo "║$(printf ' %.0s' $(seq 1 $width))║"
 
     # Track tiers to draw
     local -a tiers=()
@@ -473,14 +497,14 @@ generate_topology_diagram() {
     fi
     if [[ ${#hypervisors[@]} -gt 0 ]]; then
         tiers+=("hypervisors")
-        tier_names+=("HYPERVISOR")
+        tier_names+=("SERVERS")
     fi
 
     # Draw each tier
     for tier_idx in "${!tiers[@]}"; do
         local tier="${tiers[$tier_idx]}"
         local tier_name="${tier_names[$tier_idx]}"
-        local -a devices
+        local -a devices=()
 
         case "$tier" in
             superspines) devices=("${superspines[@]}") ;;
@@ -493,12 +517,12 @@ generate_topology_diagram() {
         draw_tier_label "$tier_name" "$width"
 
         # Draw devices in this tier
-        draw_devices_row "${devices[@]}" "$width"
+        draw_devices_row "$width" "${devices[@]}"
 
         # Draw connections to next tier if not last tier
         if [[ $tier_idx -lt $((${#tiers[@]} - 1)) ]]; then
             local next_tier="${tiers[$((tier_idx + 1))]}"
-            local -a next_devices
+            local -a next_devices=()
 
             case "$next_tier" in
                 spines) next_devices=("${spines[@]}") ;;
@@ -506,178 +530,132 @@ generate_topology_diagram() {
                 hypervisors) next_devices=("${hypervisors[@]}") ;;
             esac
 
-            draw_connections "$width" "${devices[@]}" --- "${next_devices[@]}"
+            draw_connections "$width" "${#devices[@]}" "${#next_devices[@]}"
         fi
     done
 
     # Draw bottom border
-    echo "│$(printf ' %.0s' $(seq 1 $((width))))│"
-    echo "└$(printf '─%.0s' $(seq 1 $((width))))┘"
+    echo "║$(printf ' %.0s' $(seq 1 $width))║"
+    echo "╚$(printf '═%.0s' $(seq 1 $width))╝"
 
-    # Summary
+    # Summary line
     echo ""
-    echo "Summary: ${#superspines[@]} superspine, ${#spines[@]} spine, ${#leaves[@]} leaf, ${#hypervisors[@]} hypervisors, $cabling_count connections"
+    local summary=""
+    [[ ${#superspines[@]} -gt 0 ]] && summary+="${#superspines[@]} superspine, "
+    [[ ${#spines[@]} -gt 0 ]] && summary+="${#spines[@]} spine, "
+    [[ ${#leaves[@]} -gt 0 ]] && summary+="${#leaves[@]} leaf, "
+    [[ ${#hypervisors[@]} -gt 0 ]] && summary+="${#hypervisors[@]} servers, "
+    summary+="$cabling_count links"
+    echo "  ► $summary"
 }
 
 draw_tier_label() {
     local label="$1"
     local width="$2"
-    local label_len=${#label}
-    local pad_left=$(( (width - label_len) / 2 ))
+    local decorated="─── $label ───"
+    local dec_len=${#decorated}
+    local pad_left=$(( (width - dec_len) / 2 ))
+    local pad_right=$(( width - dec_len - pad_left ))
 
-    printf "│%*s%s%*s│\n" $pad_left "" "~ $label ~" $((width - pad_left - label_len - 4)) ""
-    echo "│$(printf ' %.0s' $(seq 1 $((width))))│"
+    printf "║%*s%s%*s║\n" $pad_left "" "$decorated" $pad_right ""
+    echo "║$(printf ' %.0s' $(seq 1 $width))║"
 }
 
 draw_devices_row() {
-    local width="${@: -1}"
-    local -a devices=("${@:1:$#-1}")
+    local width="$1"
+    shift
+    local -a devices=("$@")
     local count=${#devices[@]}
 
     [[ $count -eq 0 ]] && return
 
-    # Calculate spacing
-    local device_display_width=12
-    local total_devices_width=$((count * device_display_width))
-    local total_gaps=$((count + 1))
-    local gap_width=$(( (width - total_devices_width) / total_gaps ))
-    [[ $gap_width -lt 1 ]] && gap_width=1
+    # Calculate device box width based on longest name
+    local max_len=6
+    for dev in "${devices[@]}"; do
+        [[ ${#dev} -gt $max_len ]] && max_len=${#dev}
+    done
+    local box_width=$((max_len + 4))  # 2 for brackets, 2 for padding
+
+    local total_width=$((count * box_width + (count - 1) * 4))
+    local start_pad=$(( (width - total_width) / 2 ))
+    [[ $start_pad -lt 2 ]] && start_pad=2
 
     # Build the device row
-    local line="│"
-    local used=0
+    local line="║"
+    line+=$(printf "%*s" $start_pad "")
 
     for ((i=0; i<count; i++)); do
         local dev="${devices[$i]}"
-        # Truncate device name if needed
-        [[ ${#dev} -gt 10 ]] && dev="${dev:0:10}"
-        local formatted=$(printf "[%-10s]" "$dev")
+        # Center the device name in the box
+        local name_pad=$(( (max_len - ${#dev}) / 2 ))
+        local name_pad_right=$(( max_len - ${#dev} - name_pad ))
+        local formatted=$(printf "[ %*s%s%*s ]" $name_pad "" "$dev" $name_pad_right "")
 
-        if [[ $i -eq 0 ]]; then
-            local first_gap=$(( (width - (count * device_display_width) - (count - 1) * gap_width) / 2 ))
-            [[ $first_gap -lt 1 ]] && first_gap=1
-            line+=$(printf "%*s%s" $first_gap "" "$formatted")
-            used=$((first_gap + device_display_width))
-        else
-            line+=$(printf "%*s%s" $gap_width "" "$formatted")
-            used=$((used + gap_width + device_display_width))
+        line+="$formatted"
+        if [[ $i -lt $((count - 1)) ]]; then
+            line+="    "  # gap between devices
         fi
     done
 
-    # Pad to width
+    local used=$((start_pad + total_width))
     local remaining=$((width - used))
     [[ $remaining -gt 0 ]] && line+=$(printf "%*s" $remaining "")
-    line+="│"
+    line+="║"
 
     echo "$line"
 }
 
 draw_connections() {
     local width="$1"
-    shift
-
-    # Parse upper and lower devices (separated by ---)
-    local -a upper_devices=()
-    local -a lower_devices=()
-    local in_lower=false
-
-    for arg in "$@"; do
-        [[ "$arg" == "---" ]] && { in_lower=true; continue; }
-        if $in_lower; then
-            lower_devices+=("$arg")
-        else
-            upper_devices+=("$arg")
-        fi
-    done
-
-    local upper_count=${#upper_devices[@]}
-    local lower_count=${#lower_devices[@]}
+    local upper_count="$2"
+    local lower_count="$3"
 
     [[ $upper_count -eq 0 || $lower_count -eq 0 ]] && return
 
-    # Calculate positions for upper devices
-    local device_display_width=12
-    local upper_total=$((upper_count * device_display_width))
-    local upper_gap=$(( (width - upper_total) / (upper_count + 1) ))
-    [[ $upper_gap -lt 1 ]] && upper_gap=1
-    local upper_first_gap=$(( (width - (upper_count * device_display_width) - (upper_count - 1) * upper_gap) / 2 ))
-    [[ $upper_first_gap -lt 1 ]] && upper_first_gap=1
+    # Simple connection visualization
+    # Line 1: vertical lines from upper devices
+    local line1="║"
+    local segment_width=$(( width / (upper_count + 1) ))
 
-    local -a upper_positions=()
-    for ((i=0; i<upper_count; i++)); do
-        if [[ $i -eq 0 ]]; then
-            upper_positions+=($((upper_first_gap + device_display_width / 2)))
-        else
-            upper_positions+=($((upper_positions[i-1] + device_display_width + upper_gap)))
-        fi
+    local chars=""
+    for ((i=0; i<width; i++)); do
+        chars+=" "
     done
 
-    # Calculate positions for lower devices
-    local lower_total=$((lower_count * device_display_width))
-    local lower_gap=$(( (width - lower_total) / (lower_count + 1) ))
-    [[ $lower_gap -lt 1 ]] && lower_gap=1
-    local lower_first_gap=$(( (width - (lower_count * device_display_width) - (lower_count - 1) * lower_gap) / 2 ))
-    [[ $lower_first_gap -lt 1 ]] && lower_first_gap=1
+    # Place vertical bars under each upper device
+    for ((i=1; i<=upper_count; i++)); do
+        local pos=$(( i * segment_width ))
+        [[ $pos -lt $width ]] && chars="${chars:0:$pos}│${chars:$((pos+1))}"
+    done
+    echo "║$chars║"
 
-    local -a lower_positions=()
-    for ((i=0; i<lower_count; i++)); do
-        if [[ $i -eq 0 ]]; then
-            lower_positions+=($((lower_first_gap + device_display_width / 2)))
-        else
-            lower_positions+=($((lower_positions[i-1] + device_display_width + lower_gap)))
-        fi
+    # Line 2: spread lines
+    chars=""
+    for ((i=0; i<width; i++)); do
+        chars+=" "
     done
 
-    # Draw connection lines (simplified - just show vertical lines from each upper device)
-    # Line 1: starting points (just below upper devices)
-    local line1="│"
-    local pos=0
-    for ((i=0; i<upper_count; i++)); do
-        local target=${upper_positions[$i]}
-        local spaces=$((target - pos - 1))
-        [[ $spaces -lt 0 ]] && spaces=0
-        line1+=$(printf "%*s|" $spaces "")
-        pos=$((target))
+    for ((i=1; i<=upper_count; i++)); do
+        local pos=$(( i * segment_width ))
+        local left=$((pos - 3))
+        local right=$((pos + 3))
+        [[ $left -ge 0 && $left -lt $width ]] && chars="${chars:0:$left}╱${chars:$((left+1))}"
+        [[ $right -ge 0 && $right -lt $width ]] && chars="${chars:0:$right}╲${chars:$((right+1))}"
     done
-    local remaining=$((width - pos))
-    [[ $remaining -gt 0 ]] && line1+=$(printf "%*s" $remaining "")
-    line1+="│"
-    echo "$line1"
+    echo "║$chars║"
 
-    # Line 2: diagonal spread
-    local line2="│"
-    pos=0
-    for ((i=0; i<upper_count; i++)); do
-        local target=${upper_positions[$i]}
-        local left_target=$((target - 2))
-        local right_target=$((target + 2))
-        [[ $left_target -lt 1 ]] && left_target=1
-
-        local spaces=$((left_target - pos - 1))
-        [[ $spaces -lt 0 ]] && spaces=0
-        line2+=$(printf "%*s/" $spaces "")
-        line2+=$(printf "%*s\\" 3 "")
-        pos=$((right_target + 1))
+    # Line 3: vertical lines to lower devices
+    local lower_segment=$(( width / (lower_count + 1) ))
+    chars=""
+    for ((i=0; i<width; i++)); do
+        chars+=" "
     done
-    remaining=$((width - pos))
-    [[ $remaining -gt 0 ]] && line2+=$(printf "%*s" $remaining "")
-    line2+="│"
-    echo "$line2"
 
-    # Line 3: vertical lines to lower tier
-    local line3="│"
-    pos=0
-    for ((i=0; i<lower_count; i++)); do
-        local target=${lower_positions[$i]}
-        local spaces=$((target - pos - 1))
-        [[ $spaces -lt 0 ]] && spaces=0
-        line3+=$(printf "%*s|" $spaces "")
-        pos=$((target))
+    for ((i=1; i<=lower_count; i++)); do
+        local pos=$(( i * lower_segment ))
+        [[ $pos -lt $width ]] && chars="${chars:0:$pos}│${chars:$((pos+1))}"
     done
-    remaining=$((width - pos))
-    [[ $remaining -gt 0 ]] && line3+=$(printf "%*s" $remaining "")
-    line3+="│"
-    echo "$line3"
+    echo "║$chars║"
 }
 
 ################################################################################
