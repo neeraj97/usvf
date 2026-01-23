@@ -254,6 +254,7 @@ EOF
     content: |
       net.ipv4.ip_forward=1
       net.ipv6.conf.all.forwarding=1
+    permissions: '0644'
 
 runcmd:
   - echo "Starting cloud-init setup for $sw_name..."
