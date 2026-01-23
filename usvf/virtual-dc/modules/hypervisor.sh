@@ -163,6 +163,7 @@ package_upgrade: true
 write_files:
   - path: /etc/frr/daemons
     content: |
+      zebra=yes
       bgpd=yes
       ospfd=no
       ospf6d=no
@@ -195,7 +196,6 @@ write_files:
       frr defaults traditional
       hostname $hv_name
       log syslog informational
-      no ipv6 forwarding
       service integrated-vtysh-config
       !
       ! BGP Configuration with Unnumbered Support

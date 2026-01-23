@@ -133,7 +133,8 @@ hypervisors:
 ################################################################################
 # SWITCHES DEFINITION
 ################################################################################
-# SONiC switches organized by tier (Leaf, Spine, SuperSpine)
+# FRR switches organized by tier (Leaf, Spine, SuperSpine)
+# Each switch is an Ubuntu VM with FRRouting, similar to hypervisors
 ################################################################################
 
 switches:
@@ -143,68 +144,138 @@ switches:
       router_id: "2.2.2.1"
       asn: 65101
       management:
-          interface: "eth0"
-      sonic_image: "sonic-vs.img"
-      ports: 32
-      port_speed: "10G"
-  
+          interface: "enp1s0"
+      data_interfaces:
+        - name: "enp2s0"
+          description: "Connection to hypervisor-1"
+        - name: "enp3s0"
+          description: "Connection to hypervisor-2"
+        - name: "enp4s0"
+          description: "Connection to spine-1"
+        - name: "enp5s0"
+          description: "Connection to spine-2"
+      resources:
+        cpu: 2
+        memory: 2048
+        disk: 10
+
     - name: "leaf-2"
       router_id: "2.2.2.2"
       asn: 65102
       management:
-          interface: "eth0"
-      sonic_image: "sonic-vs.img"
-      ports: 32
-      port_speed: "10G"
-  
+          interface: "enp1s0"
+      data_interfaces:
+        - name: "enp2s0"
+          description: "Connection to hypervisor-1"
+        - name: "enp3s0"
+          description: "Connection to hypervisor-3"
+        - name: "enp4s0"
+          description: "Connection to spine-1"
+        - name: "enp5s0"
+          description: "Connection to spine-2"
+      resources:
+        cpu: 2
+        memory: 2048
+        disk: 10
+
     - name: "leaf-3"
       router_id: "2.2.2.3"
       asn: 65103
       management:
-          interface: "eth0"
-      sonic_image: "sonic-vs.img"
-      ports: 32
-      port_speed: "10G"
-  
+          interface: "enp1s0"
+      data_interfaces:
+        - name: "enp2s0"
+          description: "Connection to hypervisor-2"
+        - name: "enp3s0"
+          description: "Connection to hypervisor-4"
+        - name: "enp4s0"
+          description: "Connection to spine-1"
+        - name: "enp5s0"
+          description: "Connection to spine-2"
+      resources:
+        cpu: 2
+        memory: 2048
+        disk: 10
+
     - name: "leaf-4"
       router_id: "2.2.2.4"
       asn: 65104
       management:
-          interface: "eth0"
-      sonic_image: "sonic-vs.img"
-      ports: 32
-      port_speed: "10G"
-  
+          interface: "enp1s0"
+      data_interfaces:
+        - name: "enp2s0"
+          description: "Connection to hypervisor-3"
+        - name: "enp3s0"
+          description: "Connection to hypervisor-4"
+        - name: "enp4s0"
+          description: "Connection to spine-1"
+        - name: "enp5s0"
+          description: "Connection to spine-2"
+      resources:
+        cpu: 2
+        memory: 2048
+        disk: 10
+
   # Spine Switches
   spine:
     - name: "spine-1"
       router_id: "3.3.3.1"
       asn: 65201
       management:
-          interface: "eth0"
-      sonic_image: "sonic-vs.img"
-      ports: 32
-      port_speed: "40G"
-  
+          interface: "enp1s0"
+      data_interfaces:
+        - name: "enp2s0"
+          description: "Connection to leaf-1"
+        - name: "enp3s0"
+          description: "Connection to leaf-2"
+        - name: "enp4s0"
+          description: "Connection to leaf-3"
+        - name: "enp5s0"
+          description: "Connection to leaf-4"
+        - name: "enp6s0"
+          description: "Connection to superspine-1"
+      resources:
+        cpu: 2
+        memory: 2048
+        disk: 10
+
     - name: "spine-2"
       router_id: "3.3.3.2"
       asn: 65202
       management:
-          interface: "eth0"
-      sonic_image: "sonic-vs.img"
-      ports: 32
-      port_speed: "40G"
-  
+          interface: "enp1s0"
+      data_interfaces:
+        - name: "enp2s0"
+          description: "Connection to leaf-1"
+        - name: "enp3s0"
+          description: "Connection to leaf-2"
+        - name: "enp4s0"
+          description: "Connection to leaf-3"
+        - name: "enp5s0"
+          description: "Connection to leaf-4"
+        - name: "enp6s0"
+          description: "Connection to superspine-1"
+      resources:
+        cpu: 2
+        memory: 2048
+        disk: 10
+
   # SuperSpine Switches (Optional - for large deployments)
   superspine:
     - name: "superspine-1"
       router_id: "4.4.4.1"
       asn: 65301
       management:
-          interface: "eth0"
-      sonic_image: "sonic-vs.img"
-      ports: 64
-      port_speed: "100G"
+          interface: "enp1s0"
+      data_interfaces:
+        - name: "enp2s0"
+          description: "Connection to spine-1"
+        - name: "enp3s0"
+          description: "Connection to spine-2"
+      resources:
+        cpu: 2
+        memory: 2048
+        disk: 10
 
 ################################################################################
 # MANAGEMENT NETWORK
@@ -242,7 +313,7 @@ cabling:
       interface: "enp2s0"
     destination:
       device: "leaf-1"
-      interface: "Ethernet1"
+      interface: "enp2s0"
     link_type: "p2p"
     description: "HV1 to Leaf-1"
 
@@ -251,7 +322,7 @@ cabling:
       interface: "enp3s0"
     destination:
       device: "leaf-2"
-      interface: "Ethernet1"
+      interface: "enp2s0"
     link_type: "p2p"
     description: "HV1 to Leaf-2"
 
@@ -260,7 +331,7 @@ cabling:
       interface: "enp2s0"
     destination:
       device: "leaf-1"
-      interface: "Ethernet2"
+      interface: "enp3s0"
     link_type: "p2p"
     description: "HV2 to Leaf-1"
 
@@ -268,17 +339,17 @@ cabling:
       device: "hypervisor-2"
       interface: "enp3s0"
     destination:
-      device: "leaf-2"
-      interface: "Ethernet2"
+      device: "leaf-3"
+      interface: "enp2s0"
     link_type: "p2p"
-    description: "HV2 to Leaf-2"
+    description: "HV2 to Leaf-3"
 
   - source:
       device: "hypervisor-3"
       interface: "enp2s0"
     destination:
       device: "leaf-2"
-      interface: "Ethernet3"
+      interface: "enp3s0"
     link_type: "p2p"
     description: "HV3 to Leaf-2"
 
@@ -286,118 +357,118 @@ cabling:
       device: "hypervisor-3"
       interface: "enp3s0"
     destination:
-      device: "leaf-3"
-      interface: "Ethernet1"
+      device: "leaf-4"
+      interface: "enp2s0"
     link_type: "p2p"
-    description: "HV3 to Leaf-3"
+    description: "HV3 to Leaf-4"
 
   - source:
       device: "hypervisor-4"
       interface: "enp2s0"
     destination:
-      device: "leaf-2"
-      interface: "Ethernet4"
+      device: "leaf-3"
+      interface: "enp3s0"
     link_type: "p2p"
-    description: "HV4 to Leaf-2"
+    description: "HV4 to Leaf-3"
 
   - source:
       device: "hypervisor-4"
       interface: "enp3s0"
     destination:
-      device: "leaf-3"
-      interface: "Ethernet2"
+      device: "leaf-4"
+      interface: "enp3s0"
     link_type: "p2p"
-    description: "HV4 to Leaf-3"
-  
+    description: "HV4 to Leaf-4"
+
   # Leaf to Spine connections
   - source:
       device: "leaf-1"
-      interface: "Ethernet24"
+      interface: "enp4s0"
     destination:
       device: "spine-1"
-      interface: "Ethernet1"
+      interface: "enp2s0"
     link_type: "p2p"
     description: "Leaf-1 to Spine-1"
-  
+
   - source:
       device: "leaf-1"
-      interface: "Ethernet25"
+      interface: "enp5s0"
     destination:
       device: "spine-2"
-      interface: "Ethernet1"
+      interface: "enp2s0"
     link_type: "p2p"
     description: "Leaf-1 to Spine-2"
-  
+
   - source:
       device: "leaf-2"
-      interface: "Ethernet24"
+      interface: "enp4s0"
     destination:
       device: "spine-1"
-      interface: "Ethernet2"
+      interface: "enp3s0"
     link_type: "p2p"
     description: "Leaf-2 to Spine-1"
-  
+
   - source:
       device: "leaf-2"
-      interface: "Ethernet25"
+      interface: "enp5s0"
     destination:
       device: "spine-2"
-      interface: "Ethernet2"
+      interface: "enp3s0"
     link_type: "p2p"
     description: "Leaf-2 to Spine-2"
-  
+
   - source:
       device: "leaf-3"
-      interface: "Ethernet24"
+      interface: "enp4s0"
     destination:
       device: "spine-1"
-      interface: "Ethernet3"
+      interface: "enp4s0"
     link_type: "p2p"
     description: "Leaf-3 to Spine-1"
-  
+
   - source:
       device: "leaf-3"
-      interface: "Ethernet25"
+      interface: "enp5s0"
     destination:
       device: "spine-2"
-      interface: "Ethernet3"
+      interface: "enp4s0"
     link_type: "p2p"
     description: "Leaf-3 to Spine-2"
-  
+
   - source:
       device: "leaf-4"
-      interface: "Ethernet24"
+      interface: "enp4s0"
     destination:
       device: "spine-1"
-      interface: "Ethernet4"
+      interface: "enp5s0"
     link_type: "p2p"
     description: "Leaf-4 to Spine-1"
-  
+
   - source:
       device: "leaf-4"
-      interface: "Ethernet25"
+      interface: "enp5s0"
     destination:
       device: "spine-2"
-      interface: "Ethernet4"
+      interface: "enp5s0"
     link_type: "p2p"
     description: "Leaf-4 to Spine-2"
-  
+
   # Spine to SuperSpine connections
   - source:
       device: "spine-1"
-      interface: "Ethernet24"
+      interface: "enp6s0"
     destination:
       device: "superspine-1"
-      interface: "Ethernet1"
+      interface: "enp2s0"
     link_type: "p2p"
     description: "Spine-1 to SuperSpine-1"
-  
+
   - source:
       device: "spine-2"
-      interface: "Ethernet24"
+      interface: "enp6s0"
     destination:
       device: "superspine-1"
-      interface: "Ethernet2"
+      interface: "enp3s0"
     link_type: "p2p"
     description: "Spine-2 to SuperSpine-1"
 
