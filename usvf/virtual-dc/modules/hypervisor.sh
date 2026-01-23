@@ -249,7 +249,6 @@ EOF
       !
       end
     permissions: '0640'
-    owner: frr:frr
 
   - path: /etc/sysctl.d/99-forwarding.conf
     content: |
