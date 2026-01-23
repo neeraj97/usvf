@@ -378,13 +378,13 @@ runcmd:
     cat > /etc/systemd/system/sonic-vs.service <<'EOFSVC'
     [Unit]
     Description=SONiC Virtual Switch Container
-    After=docker.service
+    After=docker.service network-online.target
     Requires=docker.service
+    Wants=network-online.target
 
     [Service]
     Type=oneshot
     RemainAfterExit=yes
-    User=ubuntu
     ExecStart=/home/ubuntu/start-sonic.sh
     ExecStop=/usr/bin/docker stop sonic-vs
     ExecStop=/usr/bin/docker rm sonic-vs
