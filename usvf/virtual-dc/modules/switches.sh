@@ -154,6 +154,10 @@ users:
     ssh_authorized_keys:
       - $ssh_pubkey
 
+sysctl:
+  net.ipv4.ip_forward: "1"
+  net.ipv6.conf.all.forwarding: "1"
+
 packages:
   - frr
   - frr-pythontools
@@ -250,15 +254,8 @@ EOF
     permissions: '0640'
     owner: frr:frr
 
-  - path: /etc/sysctl.d/99-forwarding.conf
-    content: |
-      net.ipv4.ip_forward=1
-      net.ipv6.conf.all.forwarding=1
-    permissions: '0644'
-
 runcmd:
   - echo "Starting cloud-init setup for $sw_name..."
-  - sysctl -p /etc/sysctl.d/99-forwarding.conf
 EOF
 
     # Add commands to bring up data interfaces
