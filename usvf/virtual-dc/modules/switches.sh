@@ -401,25 +401,31 @@ packages:
   - curl
 
 write_files:
-  - path: /home/ubuntu/sonic_config.json
-    owner: ubuntu:ubuntu
+  - path: /tmp/sonic_config.json
     permissions: '0644'
     encoding: b64
     content: $(base64 -w 0 "$cloud_init_dir/sonic_config.json")
 
-  - path: /home/ubuntu/configure-bgp.sh
-    owner: ubuntu:ubuntu
+  - path: /tmp/configure-bgp.sh
     permissions: '0755'
     encoding: b64
     content: $(base64 -w 0 "$cloud_init_dir/configure-bgp.sh")
 
-  - path: /home/ubuntu/start-sonic.sh
-    owner: ubuntu:ubuntu
+  - path: /tmp/start-sonic.sh
     permissions: '0755'
     encoding: b64
     content: $(base64 -w 0 "$cloud_init_dir/start-sonic.sh")
 
 runcmd:
+  # Move files to ubuntu home directory (user exists now)
+  - mkdir -p /home/ubuntu
+  - mv /tmp/sonic_config.json /home/ubuntu/sonic_config.json
+  - mv /tmp/configure-bgp.sh /home/ubuntu/configure-bgp.sh
+  - mv /tmp/start-sonic.sh /home/ubuntu/start-sonic.sh
+  - chown ubuntu:ubuntu /home/ubuntu/sonic_config.json
+  - chown ubuntu:ubuntu /home/ubuntu/configure-bgp.sh
+  - chown ubuntu:ubuntu /home/ubuntu/start-sonic.sh
+
   # Enable and start Docker
   - systemctl enable docker
   - systemctl start docker
