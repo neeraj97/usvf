@@ -140,7 +140,7 @@ create_sonic_cloud_init() {
 
     log_info "Creating cloud-init configuration for $full_vm_name (Ubuntu with FRR)..."
 
-    # Create user-data with FRR configuration (similar to hypervisor.sh approach)
+    # Create user-data (matching hypervisor.sh exactly)
     cat > "$cloud_init_dir/user-data" <<EOF
 #cloud-config
 hostname: $sw_name
@@ -150,34 +150,21 @@ manage_etc_hosts: true
 users:
   - name: ubuntu
     sudo: ALL=(ALL) NOPASSWD:ALL
-    groups: users, admin, frr, frrvty
     shell: /bin/bash
-    lock_passwd: false
     ssh_authorized_keys:
       - $ssh_pubkey
-
-# Set password for ubuntu user (password: ubuntu)
-chpasswd:
-  list: |
-    ubuntu:ubuntu
-  expire: false
-
-# Install FRR repository and packages
-apt:
-  sources:
-    frr:
-      source: "ppa:frrouting/frr"
 
 packages:
   - frr
   - frr-pythontools
-  - net-tools
   - iproute2
-  - iputils-ping
-  - traceroute
+  - net-tools
   - tcpdump
   - vim
   - curl
+
+package_update: true
+package_upgrade: true
 
 write_files:
   - path: /etc/frr/daemons
@@ -306,56 +293,6 @@ power_state:
   timeout: 300
   condition: True
 EOF
-    
-    # Create user-data for cloud-init
-    cat > "$cloud_init_dir/user-data" <<EOF
-#cloud-config
-hostname: $sw_name
-fqdn: ${sw_name}.local
-manage_etc_hosts: true
-
-users:
-  - name: ubuntu
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    groups: users, admin, frr, frrvty
-    shell: /bin/bash
-    lock_passwd: false
-    ssh_authorized_keys:
-      - $ssh_pubkey
-
-# Set password for ubuntu user (password: ubuntu)
-chpasswd:
-  list: |
-    ubuntu:ubuntu
-  expire: false
-
-# Install FRR repository and packages
-apt:
-  sources:
-    frr:
-      source: "ppa:frrouting/frr"
-
-packages:
-  - frr
-  - frr-pythontools
-  - net-tools
-  - iproute2
-  - iputils-ping
-  - traceroute
-  - tcpdump
-  - vim
-  - curl
-
-write_files:
-  - path: /tmp/daemons
-    permissions: '0644'
-    encoding: b64
-    content: $(base64 -w 0 "$cloud_init_dir/daemons")
-
-  - path: /tmp/frr.conf
-    permissions: '0640'
-    encoding: b64
-    content: $(base64 -w 0 "$cloud_init_dir/frr.conf")
 
     # Create meta-data
     cat > "$cloud_init_dir/meta-data" <<EOF
@@ -382,6 +319,18 @@ ethernets:
         - 8.8.8.8
         - 8.8.4.4
 EOF
+
+    # Add data plane interfaces with IPv6 link-local for BGP unnumbered
+    for i in $(seq 1 $iface_count); do
+        local iface_name="enp$((i+1))s0"
+        cat >> "$cloud_init_dir/network-config" <<EOF
+  $iface_name:
+    dhcp4: false
+    dhcp6: false
+    accept-ra: false
+    link-local: [ ipv6 ]
+EOF
+    done
 
     # Create cloud-init ISO
     local iso_path=$(get_vdc_cloud_init_iso "$dc_name" "$full_vm_name")

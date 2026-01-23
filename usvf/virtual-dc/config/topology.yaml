@@ -1,7 +1,7 @@
 # Virtual DC Topology Configuration
 # This file defines the complete virtual datacenter setup including:
 # - Hypervisors (VMs running as hypervisors with BGP routers)
-# - SONiC Switches (Leaf/Spine/SuperSpine)
+# - FRR Switches (Leaf/Spine/SuperSpine)
 # - Cabling layout
 # - BGP configuration with unnumbered interfaces
 
