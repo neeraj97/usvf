@@ -404,20 +404,20 @@ write_files:
   - path: /home/ubuntu/sonic_config.json
     owner: ubuntu:ubuntu
     permissions: '0644'
-    content: |
-$(cat "$cloud_init_dir/sonic_config.json" | sed 's/^/      /')
+    encoding: b64
+    content: $(base64 -w 0 "$cloud_init_dir/sonic_config.json")
 
   - path: /home/ubuntu/configure-bgp.sh
     owner: ubuntu:ubuntu
     permissions: '0755'
-    content: |
-$(cat "$cloud_init_dir/configure-bgp.sh" | sed 's/^/      /')
+    encoding: b64
+    content: $(base64 -w 0 "$cloud_init_dir/configure-bgp.sh")
 
   - path: /home/ubuntu/start-sonic.sh
     owner: ubuntu:ubuntu
     permissions: '0755'
-    content: |
-$(cat "$cloud_init_dir/start-sonic.sh" | sed 's/^/      /')
+    encoding: b64
+    content: $(base64 -w 0 "$cloud_init_dir/start-sonic.sh")
 
 runcmd:
   # Enable and start Docker
