@@ -20,7 +20,7 @@ deploy_switches() {
     log_info "DEPLOYING SONiC SWITCHES"
     log_info "=========================================="
     log_info "Method: Ubuntu 24.04 VMs + SONiC-VS Docker Containers"
-    log_info "Image: docker.io/sonicdev/docker-sonic-vs:latest"
+    log_info "Image: netreplica/docker-sonic-vs:latest"
     log_info ""
     
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
@@ -138,174 +138,31 @@ create_sonic_cloud_init() {
 
     log_info "Creating cloud-init configuration for $full_vm_name..."
 
-    # Get list of interfaces connected to this switch from cabling
-    local connected_interfaces=$(yq eval ".cabling[] | select(.destination.device == \"$sw_name\") | .destination.interface" "$config_file")
+    # Get list of SONiC interfaces connected to this switch from cabling
+    local connected_sonic_interfaces=$(yq eval ".cabling[] | select(.destination.device == \"$sw_name\") | .destination.interface" "$config_file")
 
-    # Create SONiC configuration that will be used by the container
-    cat > "$cloud_init_dir/sonic_config.json" <<EOF
-{
-    "DEVICE_METADATA": {
-        "localhost": {
-            "hostname": "$sw_name",
-            "hwsku": "Force10-S6000",
-            "platform": "x86_64-kvm_x86_64-r0",
-            "mac": "auto",
-            "type": "ToRRouter",
-            "bgp_asn": "$asn"
-        }
-    },
-    "LOOPBACK_INTERFACE": {
-        "Loopback0|${router_id}/32": {}
-    },
-    "PORT": {
-EOF
-
-    # Add port configuration for each connected interface
-    local first_port=true
-    for iface in $connected_interfaces; do
-        if [[ "$first_port" == "false" ]]; then
-            echo "," >> "$cloud_init_dir/sonic_config.json"
-        fi
-        first_port=false
-
-        cat >> "$cloud_init_dir/sonic_config.json" <<EOF
-        "$iface": {
-            "admin_status": "up",
-            "mtu": "9100",
-            "speed": "10000"
-        }
-EOF
+    # Map SONiC interface names to virtio interface names
+    # Ethernet1 -> enp2s0 (2nd interface after management enp1s0)
+    # Ethernet2 -> enp3s0, etc.
+    local connected_host_interfaces=""
+    local iface_num=2
+    for sonic_iface in $connected_sonic_interfaces; do
+        connected_host_interfaces="$connected_host_interfaces enp${iface_num}s0"
+        iface_num=$((iface_num + 1))
     done
+    connected_host_interfaces=$(echo $connected_host_interfaces | xargs)  # trim whitespace
 
-    cat >> "$cloud_init_dir/sonic_config.json" <<EOF
+    # Note: We don't create a static SONiC config file
+    # BGP configuration is done dynamically via vtysh in start-sonic.sh
+    # This allows auto-detection of interfaces at runtime
 
-    },
-    "INTERFACE": {
-EOF
 
-    # Add interface IP configuration (using IPv6 link-local for BGP unnumbered)
-    first_port=true
-    for iface in $connected_interfaces; do
-        if [[ "$first_port" == "false" ]]; then
-            echo "," >> "$cloud_init_dir/sonic_config.json"
-        fi
-        first_port=false
-
-        # SONiC uses interface without IP for unnumbered BGP
-        cat >> "$cloud_init_dir/sonic_config.json" <<EOF
-        "$iface": {}
-EOF
-    done
-
-    cat >> "$cloud_init_dir/sonic_config.json" <<EOF
-
-    }
-}
-EOF
-    
-    # Create BGP configuration script for SONiC
-    cat > "$cloud_init_dir/configure-bgp.sh" <<EOFBGP
-#!/bin/bash
-# BGP Configuration Script for SONiC Switch: $sw_name
-# ASN: $asn, Router ID: $router_id
-
-set -e
-
-echo "Configuring BGP for SONiC switch $sw_name..."
-
-# Wait for SONiC to be fully ready
-sleep 30
-
-# Configure BGP using SONiC config commands
-docker exec sonic-vs config bgp startup all
-
-# Enable IPv6 and configure interfaces for BGP unnumbered
-EOFBGP
-
-    # Add interface configuration for each connected interface
-    for iface in $connected_interfaces; do
-        cat >> "$cloud_init_dir/configure-bgp.sh" <<EOFBGP
-docker exec sonic-vs config interface startup $iface
-docker exec sonic-vs config interface ip add $iface fe80::1/64
-EOFBGP
-    done
-
-    cat >> "$cloud_init_dir/configure-bgp.sh" <<'EOFBGP'
-
-# Configure FRR for BGP unnumbered within SONiC container
-docker exec sonic-vs bash -c 'cat > /etc/frr/frr.conf <<EOFFRR
-frr version 7.5
-frr defaults traditional
-hostname SONIC_HOSTNAME_PLACEHOLDER
-log syslog informational
-service integrated-vtysh-config
-!
-EOFFRR'
-
-# Add loopback interface configuration
-docker exec sonic-vs bash -c "cat >> /etc/frr/frr.conf <<EOFFRR
-interface Loopback0
- ip address ROUTER_ID_PLACEHOLDER/32
-!
-EOFFRR"
-
-# Add BGP configuration
-docker exec sonic-vs bash -c "cat >> /etc/frr/frr.conf <<EOFFRR
-router bgp BGP_ASN_PLACEHOLDER
- bgp router-id ROUTER_ID_PLACEHOLDER
- bgp log-neighbor-changes
- no bgp default ipv4-unicast
- no bgp ebgp-requires-policy
- !
- neighbor FABRIC peer-group
- neighbor FABRIC remote-as external
- neighbor FABRIC capability extended-nexthop
- !
-EOFFRR"
-
-# Add BGP neighbors for each interface
-EOFBGP
-
-    for iface in $connected_interfaces; do
-        cat >> "$cloud_init_dir/configure-bgp.sh" <<EOFBGP
-docker exec sonic-vs bash -c "cat >> /etc/frr/frr.conf <<EOFFRR
- neighbor $iface interface peer-group FABRIC
- !
-EOFFRR"
-EOFBGP
-    done
-
-    cat >> "$cloud_init_dir/configure-bgp.sh" <<EOFBGP
-docker exec sonic-vs bash -c "cat >> /etc/frr/frr.conf <<EOFFRR
- !
- address-family ipv4 unicast
-  neighbor FABRIC activate
-  maximum-paths 64
- exit-address-family
-!
-line vty
-!
-EOFFRR"
-
-# Replace placeholders
-docker exec sonic-vs sed -i "s/SONIC_HOSTNAME_PLACEHOLDER/$sw_name/g" /etc/frr/frr.conf
-docker exec sonic-vs sed -i "s/ROUTER_ID_PLACEHOLDER/$router_id/g" /etc/frr/frr.conf
-docker exec sonic-vs sed -i "s/BGP_ASN_PLACEHOLDER/$asn/g" /etc/frr/frr.conf
-
-# Restart FRR to apply configuration
-docker exec sonic-vs systemctl restart frr || docker exec sonic-vs supervisorctl restart bgpd
-
-echo "✓ BGP configuration applied successfully"
-EOFBGP
-
-    chmod +x "$cloud_init_dir/configure-bgp.sh"
-
-    # Create startup script that will run SONiC-VS container
-    cat > "$cloud_init_dir/start-sonic.sh" <<'EOFSCRIPT'
+    # Create startup script with veth/bridge approach (FRR runs in SONiC container)
+    cat > "$cloud_init_dir/start-sonic.sh" <<EOFSCRIPT
 #!/bin/bash
 set -e
 
-echo "Starting SONiC-VS container deployment..."
+echo "Starting SONiC-VS container deployment for switch: $sw_name..."
 
 # Wait for Docker to be ready
 for i in {1..30}; do
@@ -313,54 +170,144 @@ for i in {1..30}; do
         echo "Docker is ready"
         break
     fi
-    echo "Waiting for Docker... ($i/30)"
+    echo "Waiting for Docker... (\$i/30)"
     sleep 2
 done
 
+# Get list of data plane interfaces (excluding management enp1s0)
+DATA_IFACES=\$(ls /sys/class/net/ | grep ^enp | grep -v enp1s0 | sort)
+echo "Data plane interfaces detected: \$DATA_IFACES"
+
+# Bring up all data plane interfaces
+echo "Bringing up data plane interfaces..."
+for iface in \$DATA_IFACES; do
+    echo "  Configuring \$iface"
+    ip link set \$iface up
+    ip link set \$iface promisc on
+    sysctl -w net.ipv6.conf.\${iface}.disable_ipv6=0
+    sysctl -w net.ipv6.conf.\${iface}.autoconf=1
+done
+
 # Pull SONiC-VS image
-echo "Pulling SONiC-VS Docker image (this may take a few minutes)..."
-docker pull docker.io/sonicdev/docker-sonic-vs:latest
+echo "Pulling SONiC-VS Docker image..."
+docker pull netreplica/docker-sonic-vs:latest
 
 # Stop and remove any existing sonic-vs container
 docker stop sonic-vs 2>/dev/null || true
 docker rm sonic-vs 2>/dev/null || true
 
-# Create directory for SONiC configs
-mkdir -p /etc/sonic
-
-# Copy SONiC configuration if it exists
-if [ -f /home/ubuntu/sonic_config.json ]; then
-    cp /home/ubuntu/sonic_config.json /etc/sonic/config_db.json
-fi
-
-# Start SONiC-VS container with proper networking
+# Start SONiC-VS container with network=none (we'll add interfaces manually)
 echo "Starting SONiC-VS container..."
-docker run -d \
-    --name sonic-vs \
-    --privileged \
-    --network host \
-    -v /etc/sonic:/etc/sonic \
-    docker.io/sonicdev/docker-sonic-vs:latest
+docker run -d \\
+    --name sonic-vs \\
+    --privileged \\
+    --network none \\
+    --hostname $sw_name \\
+    netreplica/docker-sonic-vs:latest
 
-# Wait for container to be ready
-sleep 10
+# Wait for container to start
+sleep 5
 
 # Check if container is running
-if docker ps | grep -q sonic-vs; then
-    echo "✓ SONiC-VS container started successfully"
-    echo "Access SONiC CLI with: docker exec -it sonic-vs bash"
-else
+if ! docker ps | grep -q sonic-vs; then
     echo "✗ Failed to start SONiC-VS container"
     exit 1
 fi
 
-# Configure BGP after SONiC is ready
-if [ -f /home/ubuntu/configure-bgp.sh ]; then
-    echo "Configuring BGP..."
-    /home/ubuntu/configure-bgp.sh &
-fi
+echo "✓ SONiC-VS container started"
 
-# Display status
+# Get container PID and create network namespace symlink
+SONIC_PID=\$(docker inspect -f '{{.State.Pid}}' sonic-vs)
+SONIC_NETNS="sonic-netns"
+mkdir -p /var/run/netns
+ln -sf /proc/\$SONIC_PID/ns/net /var/run/netns/\$SONIC_NETNS
+
+echo "Connecting host interfaces to SONiC container using veth pairs and bridges..."
+
+# Create veth pairs and bridges for each host interface
+ETH_NUM=1
+for HOST_IFACE in \$DATA_IFACES; do
+    VETH_HOST="veth-h\${ETH_NUM}"
+    VETH_SONIC="eth\${ETH_NUM}"
+    BR_NAME="br-\${HOST_IFACE}"
+
+    echo "  Connecting \$HOST_IFACE -> eth\${ETH_NUM} in SONiC"
+
+    # Create veth pair
+    ip link add \$VETH_HOST type veth peer name \$VETH_SONIC
+
+    # Move SONiC end to container namespace
+    ip link set \$VETH_SONIC netns \$SONIC_NETNS
+
+    # Create bridge and connect physical interface and veth
+    ip link add name \$BR_NAME type bridge
+    ip link set \$BR_NAME up
+    ip link set \$HOST_IFACE master \$BR_NAME
+    ip link set \$VETH_HOST master \$BR_NAME
+    ip link set \$VETH_HOST up
+
+    # Configure SONiC end inside container
+    ip netns exec \$SONIC_NETNS ip link set \$VETH_SONIC up
+    ip netns exec \$SONIC_NETNS ip link set \$VETH_SONIC promisc on
+
+    ETH_NUM=\$((ETH_NUM + 1))
+done
+
+echo "✓ All interfaces connected to SONiC container"
+
+# Wait for SONiC services to initialize
+echo "Waiting for SONiC services to initialize (30 seconds)..."
+sleep 30
+
+# Configure BGP in SONiC using vtysh (FRR runs inside SONiC)
+echo "Configuring BGP in SONiC container..."
+
+# First, configure loopback interface
+docker exec sonic-vs bash -c "ip addr add $router_id/32 dev lo"
+
+# Configure BGP using vtysh
+docker exec sonic-vs vtysh -c "configure terminal" \\
+    -c "router bgp $asn" \\
+    -c " bgp router-id $router_id" \\
+    -c " bgp log-neighbor-changes" \\
+    -c " no bgp default ipv4-unicast" \\
+    -c " no bgp ebgp-requires-policy" \\
+    -c " neighbor FABRIC peer-group" \\
+    -c " neighbor FABRIC remote-as external" \\
+    -c " neighbor FABRIC capability extended-nexthop"
+
+# Add BGP neighbors for each interface
+ETH_NUM=1
+for HOST_IFACE in \$DATA_IFACES; do
+    ETH_IFACE="eth\${ETH_NUM}"
+    echo "  Adding BGP neighbor on \$ETH_IFACE"
+
+    docker exec sonic-vs vtysh -c "configure terminal" \\
+        -c "router bgp $asn" \\
+        -c " neighbor \$ETH_IFACE interface peer-group FABRIC"
+
+    ETH_NUM=\$((ETH_NUM + 1))
+done
+
+# Enable BGP for IPv4 address family
+docker exec sonic-vs vtysh -c "configure terminal" \\
+    -c "router bgp $asn" \\
+    -c " address-family ipv4 unicast" \\
+    -c "  neighbor FABRIC activate" \\
+    -c "  maximum-paths 64" \\
+    -c " exit-address-family" \\
+    -c "exit" \\
+    -c "write memory"
+
+echo ""
+echo "✓ SONiC switch is ready! BGP is running inside SONiC container."
+echo ""
+echo "Useful commands:"
+echo "  Access SONiC: docker exec -it sonic-vs bash"
+echo "  Check BGP: docker exec sonic-vs vtysh -c 'show bgp summary'"
+echo "  Check interfaces: docker exec sonic-vs ip link show"
+echo "  Check routes: docker exec sonic-vs vtysh -c 'show ip route'"
+echo ""
 docker ps | grep sonic-vs
 EOFSCRIPT
 
@@ -390,7 +337,6 @@ chpasswd:
 
 packages:
   - docker.io
-  - docker-compose
   - net-tools
   - iproute2
   - iputils-ping
@@ -399,18 +345,9 @@ packages:
   - vim
   - jq
   - curl
+  - bridge-utils
 
 write_files:
-  - path: /tmp/sonic_config.json
-    permissions: '0644'
-    encoding: b64
-    content: $(base64 -w 0 "$cloud_init_dir/sonic_config.json")
-
-  - path: /tmp/configure-bgp.sh
-    permissions: '0755'
-    encoding: b64
-    content: $(base64 -w 0 "$cloud_init_dir/configure-bgp.sh")
-
   - path: /tmp/start-sonic.sh
     permissions: '0755'
     encoding: b64
@@ -419,12 +356,14 @@ write_files:
 runcmd:
   # Move files to ubuntu home directory (user exists now)
   - mkdir -p /home/ubuntu
-  - mv /tmp/sonic_config.json /home/ubuntu/sonic_config.json
-  - mv /tmp/configure-bgp.sh /home/ubuntu/configure-bgp.sh
   - mv /tmp/start-sonic.sh /home/ubuntu/start-sonic.sh
-  - chown ubuntu:ubuntu /home/ubuntu/sonic_config.json
-  - chown ubuntu:ubuntu /home/ubuntu/configure-bgp.sh
   - chown ubuntu:ubuntu /home/ubuntu/start-sonic.sh
+
+  # Enable IPv6 and IP forwarding (needed for SONiC)
+  - sysctl -w net.ipv6.conf.all.forwarding=1
+  - sysctl -w net.ipv4.ip_forward=1
+  - sysctl -w net.ipv6.conf.all.disable_ipv6=0
+  - sysctl -w net.ipv6.conf.default.disable_ipv6=0
 
   # Enable and start Docker
   - systemctl enable docker
