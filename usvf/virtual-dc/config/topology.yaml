@@ -22,6 +22,11 @@ hypervisors:
       cpu: 1
       memory: 1024
       disk: 5
+    # Additional disks for storage (optional)
+    additional_disks:
+      - name: "data1"
+        size: 10          # Size in GB
+        format: "raw"   # Disk format (qcow2, raw)
 
   - name: "hypervisor-2"
     short_name: "hv2"
@@ -36,6 +41,10 @@ hypervisors:
       cpu: 1
       memory: 1024
       disk: 5
+    additional_disks:
+      - name: "data1"
+        size: 10
+        format: "raw"
 
   - name: "hypervisor-3"
     short_name: "hv3"
@@ -50,6 +59,10 @@ hypervisors:
       cpu: 1
       memory: 1024
       disk: 5
+    additional_disks:
+      - name: "data1"
+        size: 10
+        format: "raw"
 
   - name: "hypervisor-4"
     short_name: "hv4"
@@ -64,6 +77,10 @@ hypervisors:
       cpu: 1
       memory: 1024
       disk: 5
+    additional_disks:
+      - name: "data1"
+        size: 10
+        format: "raw"
 
 switches:
   leaf:
