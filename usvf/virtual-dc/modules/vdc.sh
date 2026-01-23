@@ -506,7 +506,7 @@ generate_topology_diagram() {
                 hypervisors) next_devices=("${hypervisors[@]}") ;;
             esac
 
-            draw_connections "${devices[@]}" --- "${next_devices[@]}" "$width" "$config_file"
+            draw_connections "$width" "${devices[@]}" --- "${next_devices[@]}"
         fi
     done
 
@@ -573,8 +573,8 @@ draw_devices_row() {
 }
 
 draw_connections() {
-    local width="${@: -1}"
-    local config_file="${@: -2:1}"
+    local width="$1"
+    shift
 
     # Parse upper and lower devices (separated by ---)
     local -a upper_devices=()
@@ -583,7 +583,6 @@ draw_connections() {
 
     for arg in "$@"; do
         [[ "$arg" == "---" ]] && { in_lower=true; continue; }
-        [[ "$arg" == "$config_file" || "$arg" == "$width" ]] && continue
         if $in_lower; then
             lower_devices+=("$arg")
         else
