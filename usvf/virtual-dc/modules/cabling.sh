@@ -102,26 +102,63 @@ attach_interface_to_vm() {
     local network_name="${dc_name}-p2p-link-${link_id}"
     local full_vm_name="${dc_name}-${vm_name}"
     
-    log_info "Attaching interface to $full_vm_name on network $network_name"
+    log_info "Updating interface $iface_name on $full_vm_name to network $network_name"
     
     # Check if VM exists
     if ! virsh list --all --name | grep -q "^${full_vm_name}$"; then
-        log_warn "VM $full_vm_name not found, skipping interface attachment"
+        log_warn "VM $full_vm_name not found, skipping interface update"
         return 1
     fi
     
-    # Attach network interface to VM
-    # Note: The interface will appear as ethX in the VM
-    # We'll need to configure it post-boot
+    # Extract PCI slot from interface name (enp2s0 -> slot 2, enp3s0 -> slot 3, etc.)
+    local slot_num=$(echo "$iface_name" | grep -oP 'enp\K\d+')
     
-    virsh attach-interface "$full_vm_name" \
-        --type network \
-        --source "$network_name" \
-        --model virtio \
-        --config \
-        --persistent 2>/dev/null || log_warn "Could not attach interface (VM may need to be running)"
+    if [[ -z "$slot_num" ]]; then
+        log_error "Could not extract slot number from interface name: $iface_name"
+        return 1
+    fi
     
-    log_success "✓ Interface attached to $full_vm_name"
+    # PCI address format: 0000:00:0{slot_num}.0
+    local pci_addr=$(printf "0000:00:%02x.0" "$slot_num")
+    
+    log_info "  Interface: $iface_name (PCI: $pci_addr)"
+    
+    # Create temporary XML for interface update
+    local temp_xml="/tmp/iface-${full_vm_name}-${iface_name}.xml"
+    cat > "$temp_xml" <<EOF
+<interface type='network'>
+  <source network='$network_name'/>
+  <model type='virtio'/>
+  <address type='pci' domain='0x0000' bus='0x00' slot='0x$(printf "%x" "$slot_num")' function='0x0'/>
+</interface>
+EOF
+    
+    # Update the interface - works for both running and stopped VMs
+    if virsh update-device "$full_vm_name" "$temp_xml" --config --persistent 2>/dev/null; then
+        log_success "✓ Interface $iface_name updated on $full_vm_name"
+        rm -f "$temp_xml"
+        return 0
+    else
+        log_warn "Could not update interface (trying alternative method)"
+        
+        # Alternative: Detach old, attach new (for stopped VMs)
+        virsh detach-interface "$full_vm_name" network --config --persistent 2>/dev/null
+        
+        if virsh attach-interface "$full_vm_name" \
+            --type network \
+            --source "$network_name" \
+            --model virtio \
+            --config \
+            --persistent 2>/dev/null; then
+            log_success "✓ Interface attached to $full_vm_name"
+            rm -f "$temp_xml"
+            return 0
+        else
+            log_error "Failed to update interface on $full_vm_name"
+            rm -f "$temp_xml"
+            return 1
+        fi
+    fi
 }
 
 configure_interface_in_vm() {
