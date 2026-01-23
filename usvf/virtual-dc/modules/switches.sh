@@ -418,6 +418,8 @@ create_sonic_vm() {
     fi
 
     # Build virt-install command with Ubuntu 24.04 settings
+    # Note: Only management interface is added here
+    # Data plane interfaces will be attached by cabling module as P2P networks
     local cmd="virt-install \
         --name $vm_name \
         --vcpus $cpu \
@@ -432,12 +434,8 @@ create_sonic_vm() {
         --import \
         --noautoconsole"
 
-    # Add data plane interfaces (will be configured for P2P links)
-    for i in $(seq 1 $iface_count); do
-        cmd="$cmd --network network=default,model=virtio"
-    done
-
     log_info "Executing: virt-install for $vm_name..."
+    log_info "  Note: Data plane interfaces will be attached by cabling module"
 
     # Execute virt-install
     if eval "$cmd"; then
