@@ -21,7 +21,7 @@ hypervisors:
     resources:
       cpu: 1
       memory: 1024
-      disk: 5
+      disk: 15
     # Additional disks for storage (optional)
     additional_disks:
       - name: "data1"
@@ -40,7 +40,7 @@ hypervisors:
     resources:
       cpu: 1
       memory: 1024
-      disk: 5
+      disk: 15
     additional_disks:
       - name: "data1"
         size: 10
@@ -58,7 +58,7 @@ hypervisors:
     resources:
       cpu: 1
       memory: 1024
-      disk: 5
+      disk: 15
     additional_disks:
       - name: "data1"
         size: 10
@@ -76,7 +76,7 @@ hypervisors:
     resources:
       cpu: 1
       memory: 1024
-      disk: 5
+      disk: 15
     additional_disks:
       - name: "data1"
         size: 10
