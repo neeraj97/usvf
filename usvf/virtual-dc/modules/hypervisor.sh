@@ -228,8 +228,8 @@ EOF
         neighbor FABRIC activate
         neighbor FABRIC route-map ALLOW-ALL in
         neighbor FABRIC route-map ALLOW-ALL out
-        ! Redistribute kernel routes from lo1 interface only
-        redistribute kernel route-map REDISTRIBUTE-LO1
+        ! Redistribute connected routes from lo1 interface only
+        redistribute connected route-map REDISTRIBUTE-LO1
         maximum-paths 64
         maximum-paths ibgp 64
        exit-address-family
@@ -242,7 +242,7 @@ EOF
       ! Allow all routes from BGP neighbors
       route-map ALLOW-ALL permit 10
       !
-      ! Redistribute only kernel routes from lo1 interface
+      ! Redistribute only connected routes from lo1 interface
       route-map REDISTRIBUTE-LO1 permit 10
        match interface lo1
       !
