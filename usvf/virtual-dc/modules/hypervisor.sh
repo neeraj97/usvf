@@ -258,11 +258,9 @@ EOF
 runcmd:
   - echo "Starting cloud-init setup for $hv_name..."
   - sysctl -p /etc/sysctl.d/99-forwarding.conf
-  - echo "Creating lo1 loopback interface..."
-  - ip link add lo1 type dummy
-  - ip addr add $router_id/32 dev lo1
-  - ip link set lo1 up
-  - echo "lo1 interface created with IP $router_id/32"
+  - sleep 2
+  - echo "Verifying lo1 interface..."
+  - ip addr show lo1
 EOF
 
     # Add commands to bring up data interfaces
@@ -281,8 +279,6 @@ EOF
   - systemctl restart frr
   - sleep 3
   - systemctl status frr --no-pager
-  - echo "Verifying lo1 interface..."
-  - ip addr show lo1
   - |
     cat > /etc/motd <<MOTD
     ============================================================
@@ -312,7 +308,7 @@ power_state:
 EOF
     
     # Create network-config
-    # Configure management interface (enp1s0) and data interfaces (enp2s0, enp3s0, etc.)
+    # Configure management interface (enp1s0), data interfaces (enp2s0, enp3s0, etc.), and lo1
     cat > "$cloud_init_dir/network-config" <<EOF
 version: 2
 ethernets:
@@ -340,6 +336,14 @@ EOF
     link-local: [ ipv6 ]
 EOF
     done
+
+    # Add lo1 dummy interface for BGP router ID (persistent across reboots)
+    cat >> "$cloud_init_dir/network-config" <<EOF
+dummy-devices:
+  lo1:
+    addresses:
+      - $router_id/32
+EOF
     
     # Create cloud-init ISO
     local iso_path=$(get_vdc_cloud_init_iso "$dc_name" "$full_vm_name")
