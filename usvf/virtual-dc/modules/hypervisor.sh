@@ -198,10 +198,6 @@ write_files:
       log syslog informational
       service integrated-vtysh-config
       !
-      ! Configure loopback
-      interface lo
-       ip address $router_id/32
-      !
       ! BGP Configuration with Unnumbered Support
       router bgp $asn
        bgp router-id $router_id
@@ -232,8 +228,8 @@ EOF
         neighbor FABRIC activate
         neighbor FABRIC route-map ALLOW-ALL in
         neighbor FABRIC route-map ALLOW-ALL out
-        ! Advertise loopback network
-        network $router_id/32
+        ! Redistribute kernel routes from lo1 interface only
+        redistribute kernel route-map REDISTRIBUTE-LO1
         maximum-paths 64
         maximum-paths ibgp 64
        exit-address-family
@@ -243,9 +239,12 @@ EOF
        exit-address-family
       !
       ! Route maps
+      ! Allow all routes from BGP neighbors
       route-map ALLOW-ALL permit 10
       !
-      line vty
+      ! Redistribute only kernel routes from lo1 interface
+      route-map REDISTRIBUTE-LO1 permit 10
+       match interface lo1
       !
       end
     permissions: '0640'
@@ -259,6 +258,11 @@ EOF
 runcmd:
   - echo "Starting cloud-init setup for $hv_name..."
   - sysctl -p /etc/sysctl.d/99-forwarding.conf
+  - echo "Creating lo1 loopback interface..."
+  - ip link add lo1 type dummy
+  - ip addr add $router_id/32 dev lo1
+  - ip link set lo1 up
+  - echo "lo1 interface created with IP $router_id/32"
 EOF
 
     # Add commands to bring up data interfaces
@@ -272,25 +276,31 @@ EOF
     cat >> "$cloud_init_dir/user-data" <<EOF
   - chown frr:frr /etc/frr/frr.conf
   - chmod 640 /etc/frr/frr.conf
+  - sleep 2
   - systemctl enable frr
   - systemctl restart frr
+  - sleep 3
   - systemctl status frr --no-pager
+  - echo "Verifying lo1 interface..."
+  - ip addr show lo1
   - |
     cat > /etc/motd <<MOTD
     ============================================================
     Ubuntu 24.04 LTS (Noble Numbat) - Hypervisor Node
     ============================================================
     Hostname:   $hv_name
-    Router ID:  $router_id
+    Router ID:  $router_id (on lo1)
     BGP ASN:    $asn
     Role:       Virtual DC Hypervisor with BGP routing
     
-    FRRouting:  Enabled (BGP Unnumbered support)
+    FRRouting:  Enabled (BGP Unnumbered)
+    Redistribution: Kernel routes from lo1 only
     
     Quick Commands:
       - vtysh               # Enter FRR CLI
       - show ip bgp summary # Check BGP status
       - show ip route       # View routing table
+      - ip addr show lo1    # View lo1 interface
     ============================================================
     MOTD
   - echo "Cloud-init completed for $hv_name" | systemd-cat -t cloud-init

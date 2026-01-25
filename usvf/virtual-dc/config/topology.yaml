@@ -19,8 +19,8 @@ hypervisors:
       - name: "enp2s0"
         description: "Connection to switch-1"
     resources:
-      cpu: 1
-      memory: 1024
+      cpu: 2
+      memory: 4096
       disk: 15
     # Additional disks for storage (optional)
     additional_disks:
@@ -38,8 +38,8 @@ hypervisors:
       - name: "enp2s0"
         description: "Connection to switch-1"
     resources:
-      cpu: 1
-      memory: 1024
+      cpu: 2
+      memory: 2048
       disk: 15
     additional_disks:
       - name: "data1"
@@ -56,8 +56,8 @@ hypervisors:
       - name: "enp2s0"
         description: "Connection to switch-2"
     resources:
-      cpu: 1
-      memory: 1024
+      cpu: 2
+      memory: 2048
       disk: 15
     additional_disks:
       - name: "data1"
@@ -74,8 +74,8 @@ hypervisors:
       - name: "enp2s0"
         description: "Connection to switch-2"
     resources:
-      cpu: 1
-      memory: 1024
+      cpu: 2
+      memory: 2048
       disk: 15
     additional_disks:
       - name: "data1"
