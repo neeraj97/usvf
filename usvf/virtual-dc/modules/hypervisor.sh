@@ -243,6 +243,7 @@ EOF
       route-map ALLOW-ALL permit 10
         set src $router_id
       !
+      ip protocol bgp route-map ALLOW-ALL
       ! Redistribute only connected routes from lo1 interface
       route-map REDISTRIBUTE-LO1 permit 10
        match interface lo1
@@ -344,6 +345,8 @@ dummy-devices:
   lo1:
     addresses:
       - $router_id/32
+  dum-ex:
+    
 EOF
     
     # Create cloud-init ISO
