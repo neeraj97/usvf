@@ -345,7 +345,6 @@ dummy-devices:
   lo1:
     addresses:
       - $router_id/32
-      - 10.100.0.254/32 # Additional private IP remove this
   dum-ex:
     addresses: []
 EOF
