@@ -20,7 +20,7 @@ hypervisors:
         description: "Connection to switch-1"
     resources:
       cpu: 4
-      memory: 4096
+      memory: 8192
       disk: 15
     # Additional disks for storage (optional)
     additional_disks:
@@ -39,7 +39,7 @@ hypervisors:
         description: "Connection to switch-1"
     resources:
       cpu: 4
-      memory: 4096
+      memory: 8192
       disk: 15
     additional_disks:
       - name: "data1"
@@ -57,7 +57,7 @@ hypervisors:
         description: "Connection to switch-2"
     resources:
       cpu: 4
-      memory: 4096
+      memory: 8192
       disk: 15
     additional_disks:
       - name: "data1"
@@ -75,7 +75,7 @@ hypervisors:
         description: "Connection to switch-2"
     resources:
       cpu: 4
-      memory: 4096
+      memory: 8192
       disk: 15
     additional_disks:
       - name: "data1"
