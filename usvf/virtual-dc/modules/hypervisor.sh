@@ -246,8 +246,7 @@ EOF
       ip protocol bgp route-map ALLOW-ALL
       ! Redistribute only connected routes from lo1 interface
       route-map REDISTRIBUTE-LO1-DUMEX permit 10
-       match interface lo1
-       match interface dum-ex
+       match interface lo1 dum-ex
       !
       end
     permissions: '0640'
