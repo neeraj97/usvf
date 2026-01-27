@@ -81,6 +81,24 @@ hypervisors:
       - name: "data1"
         size: 10
         format: "raw"
+  
+  - name: "hypervisor-5"
+    short_name: "hv5"
+    router_id: "10.1.0.5"
+    asn: 65005
+    management:
+      interface: "enp1s0"
+    data_interfaces:
+      - name: "enp2s0"
+        description: "Connection to switch-2"
+    resources:
+      cpu: 4
+      memory: 8192
+      disk: 15
+    additional_disks:
+      - name: "data1"
+        size: 10
+        format: "raw"
 
 switches:
   leaf:
@@ -112,6 +130,8 @@ switches:
         - name: "enp3s0"
           description: "Connection to hypervisor-4"
         - name: "enp4s0"
+          description: "Connection to hypervisor-5"
+        - name: "enp5s0"
           description: "Connection to switch-1"
       resources:
         cpu: 2
@@ -161,11 +181,19 @@ cabling:
     description: "hypervisor-4 to switch-2"
 
   - source:
-      device: "switch-1"
-      interface: "enp4s0"
+      device: "hypervisor-5"
+      interface: "enp2s0"
     destination:
       device: "switch-2"
       interface: "enp4s0"
     link_type: "p2p"
-    description: "switch-1 to switch-2"
+    description: "hypervisor-5 to switch-2"
 
+  - source:
+      device: "switch-1"
+      interface: "enp4s0"
+    destination:
+      device: "switch-2"
+      interface: "enp5s0"
+    link_type: "p2p"
+    description: "switch-1 to switch-2"

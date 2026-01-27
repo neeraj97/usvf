@@ -229,7 +229,7 @@ EOF
         neighbor FABRIC route-map ALLOW-ALL in
         neighbor FABRIC route-map ALLOW-ALL out
         ! Redistribute connected routes from lo1 interface only
-        redistribute connected route-map REDISTRIBUTE-LO1
+        redistribute connected route-map REDISTRIBUTE-LO1-DUMEX
         maximum-paths 64
         maximum-paths ibgp 64
        exit-address-family
@@ -245,8 +245,9 @@ EOF
       !
       ip protocol bgp route-map ALLOW-ALL
       ! Redistribute only connected routes from lo1 interface
-      route-map REDISTRIBUTE-LO1 permit 10
+      route-map REDISTRIBUTE-LO1-DUMEX permit 10
        match interface lo1
+       match interface dum-ex
       !
       end
     permissions: '0640'
