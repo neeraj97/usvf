@@ -1,0 +1,59 @@
+---
+# ========================
+# 1. Base Setup
+# ========================
+kolla_base_distro: "ubuntu"
+kolla_install_type: "source"
+openstack_release: "2024.1"
+
+# ========================
+# 2. Networking (Underlay)
+# ========================
+# VIP on Controller Loopbacks (Anycast)
+kolla_internal_vip_address: "10.100.0.254"
+enable_keepalived: "no"
+
+# Bind services to Host Loopbacks
+api_interface_address: "{{ api_ip }}"
+tunnel_interface_address: "{{ tunnel_ip }}"
+
+# -----------------------------------------------------------------
+# PURE BGP EXTERNAL (No Physical Bridge)
+# -----------------------------------------------------------------
+# The Agent will attach routes to this interface.
+neutron_external_interface: "dum-ex"
+network_interface: "lo1"
+# ========================
+# 3. OVN Configuration
+# ========================
+neutron_plugin_agent: "ovn"
+neutron_tunnel_type: "geneve"
+enable_neutron_dvr: "yes"
+enable_neutron_provider_networks: "yes"
+neutron_ovn_distributed_fip: "yes"
+
+# ========================
+# 4. OVN BGP AGENT
+# ========================
+enable_neutron_bgp_dragent: "no"
+enable_ovn_bgp_agent: "yes"
+
+# The NB Driver is perfect for this. It simply syncs OVN DB -> Kernel Routes.
+ovn_bgp_agent_driver: "nb_ovn_bgp_driver"
+
+# -----------------------------------------------------------------
+# 5. FRR Handling
+# -----------------------------------------------------------------
+# We disable Kolla's FRR because we use the Host FRR.
+# We DO NOT map volumes because we rely on 'redistribute kernel'.
+enable_frr: "no"
+
+# ========================
+# 6. Core Services
+# ========================
+enable_horizon: "yes"
+enable_heat: "yes"
+enable_fluentd: "yes"
+enable_cinder: "yes"
+enable_cinder_backend_lvm: "yes"
+cinder_target_helper: "lioadm"
