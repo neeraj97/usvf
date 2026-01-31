@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --version:*)",
+      "Bash(ln:*)",
+      "Bash(/usr/local/bin/node:*)",
+      "Bash(ssh hetzner:*)",
+      "Bash(scp:*)"
+    ]
+  }
+}

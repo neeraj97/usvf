@@ -2,9 +2,9 @@
 # additional groups are for more control of the environment.
 [control]
 # These hostname must be resolvable from your deployment host
-control01 ansible_host=192.168.10.11 api_ip=10.1.0.1 tunnel_ip=10.1.0.1
-control02 ansible_host=192.168.10.12 api_ip=10.1.0.2 tunnel_ip=10.1.0.2
-control03 ansible_host=192.168.10.13 api_ip=10.1.0.3 tunnel_ip=10.1.0.3
+control01 ansible_host=192.168.10.11 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.1 tunnel_ip=10.1.0.1
+control02 ansible_host=192.168.10.12 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.2 tunnel_ip=10.1.0.2
+control03 ansible_host=192.168.10.13 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.3 tunnel_ip=10.1.0.3
 
 # The above can also be specified as follows:
 #control[01:03]     ansible_user=kolla
@@ -17,8 +17,8 @@ control02
 control03
 
 [compute]
-compute01 ansible_host=192.168.10.14 api_ip=10.1.0.4 tunnel_ip=10.1.0.4
-compute02 ansible_host=192.168.10.15 api_ip=10.1.0.5 tunnel_ip=10.1.0.5
+compute01 ansible_host=192.168.10.14 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.4 tunnel_ip=10.1.0.4
+compute02 ansible_host=192.168.10.15 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.5 tunnel_ip=10.1.0.5
 
 [monitoring]
 control01
