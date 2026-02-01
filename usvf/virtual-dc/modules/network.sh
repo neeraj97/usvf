@@ -62,7 +62,7 @@ create_management_network() {
 
     # Try to get subnet from vdc-manager registry first
     local mgmt_subnet=""
-    local VDC_REGISTRY="$PROJECT_ROOT/.vdc-registry.json"
+    local VDC_REGISTRY="$PROJECT_ROOT/config/vdc-registry.json"
 
     if [[ -f "$VDC_REGISTRY" ]]; then
         mgmt_subnet=$(jq -r ".virtual_datacenters[] | select(.name == \"$dc_name\") | .management_subnet" "$VDC_REGISTRY" 2>/dev/null)
