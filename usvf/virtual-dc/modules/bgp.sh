@@ -6,21 +6,62 @@
 # - Hypervisor VMs (using FRRouting)
 # - SONiC switches (using FRRouting/SONiC BGP)
 # - Point-to-point interfaces with IPv6 link-local addresses
+#
+# This module integrates with the standalone FRR configuration module
+# located in frr/frr-functions.sh for config generation.
 ################################################################################
+
+# Source FRR functions library if available (for improved config generation)
+FRR_FUNCTIONS_PATH="$PROJECT_ROOT/frr/frr-functions.sh"
+if [[ -f "$FRR_FUNCTIONS_PATH" ]]; then
+    source "$FRR_FUNCTIONS_PATH"
+    FRR_MODULE_AVAILABLE=true
+else
+    FRR_MODULE_AVAILABLE=false
+fi
 
 configure_bgp() {
     local config_file="$1"
     local dry_run="${2:-false}"
-    
+
     log_info "Configuring BGP unnumbered on all devices..."
-    
+
+    if [[ "$FRR_MODULE_AVAILABLE" == "true" ]]; then
+        log_info "Using FRR module for configuration generation"
+    fi
+
     # Configure BGP on hypervisors
     configure_bgp_hypervisors "$config_file" "$dry_run"
-    
+
     # Configure BGP on switches
     configure_bgp_switches "$config_file" "$dry_run"
-    
+
     log_success "BGP configuration completed successfully"
+}
+
+# Wrapper to use FRR module for reconfiguration
+# Usage: reconfigure_bgp <config_file> [device_name]
+# This allows using the standalone FRR module to reconfigure devices
+reconfigure_bgp() {
+    local config_file="$1"
+    local device_name="${2:-}"
+
+    if [[ "$FRR_MODULE_AVAILABLE" != "true" ]]; then
+        log_error "FRR module not available. Please ensure frr/frr-functions.sh exists."
+        return 1
+    fi
+
+    local frr_script="$PROJECT_ROOT/frr/configure-frr.sh"
+    if [[ ! -x "$frr_script" ]]; then
+        log_error "FRR configuration script not found: $frr_script"
+        return 1
+    fi
+
+    if [[ -n "$device_name" ]]; then
+        "$frr_script" --vdc-config "$config_file" -d "$device_name"
+    else
+        "$frr_script" --vdc-config "$config_file"
+    fi
 }
 
 configure_bgp_hypervisors() {
@@ -61,32 +102,43 @@ generate_hypervisor_bgp_config() {
     local config_file="$1"
     local index="$2"
     local hv_name="$3"
-    
+
     local router_id=$(yq eval ".hypervisors[$index].router_id" "$config_file")
     local asn=$(yq eval ".hypervisors[$index].asn" "$config_file")
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
-    
+
     local bgp_config_dir=$(get_vdc_bgp_configs_dir "$dc_name")
     mkdir -p "$bgp_config_dir"
-    
+
+    # Use FRR module if available for improved config generation
+    if [[ "$FRR_MODULE_AVAILABLE" == "true" ]]; then
+        # Get neighbors from VDC cabling using FRR module
+        local neighbors=$(get_neighbors_from_vdc_cabling "$config_file" "$hv_name")
+        generate_frr_hypervisor_config "$hv_name" "$router_id" "$asn" "$neighbors" \
+            > "$bgp_config_dir/${hv_name}-bgp.conf"
+        log_success "✓ BGP configuration generated for $hv_name (using FRR module)"
+        return 0
+    fi
+
+    # Fallback: Legacy inline config generation
     # Find all neighbors from cabling configuration
     local neighbors=""
     local cable_count=$(yq eval '.cabling | length' "$config_file")
-    
+
     for i in $(seq 0 $((cable_count - 1))); do
         local src_device=$(yq eval ".cabling[$i].source.device" "$config_file")
         local src_iface=$(yq eval ".cabling[$i].source.interface" "$config_file")
         local dst_device=$(yq eval ".cabling[$i].destination.device" "$config_file")
         local dst_iface=$(yq eval ".cabling[$i].destination.interface" "$config_file")
-        
+
         if [[ "$src_device" == "$hv_name" ]]; then
             neighbors="${neighbors}\n neighbor $src_iface interface peer-group FABRIC"
         elif [[ "$dst_device" == "$hv_name" ]]; then
             neighbors="${neighbors}\n neighbor $dst_iface interface peer-group FABRIC"
         fi
     done
-    
-    # Generate FRR configuration
+
+    # Generate FRR configuration (legacy)
     cat > "$bgp_config_dir/${hv_name}-bgp.conf" <<EOF
 !
 ! BGP Configuration for $hv_name
@@ -129,7 +181,7 @@ line vty
 !
 end
 EOF
-    
+
     log_success "✓ BGP configuration generated for $hv_name"
 }
 
@@ -209,32 +261,43 @@ generate_switch_bgp_config() {
     local tier="$2"
     local index="$3"
     local sw_name="$4"
-    
+
     local router_id=$(yq eval ".switches.$tier[$index].router_id" "$config_file")
     local asn=$(yq eval ".switches.$tier[$index].asn" "$config_file")
     local dc_name=$(yq eval '.global.datacenter_name' "$config_file")
-    
+
     local bgp_config_dir=$(get_vdc_bgp_configs_dir "$dc_name")
     mkdir -p "$bgp_config_dir"
-    
+
+    # Use FRR module if available for improved config generation
+    if [[ "$FRR_MODULE_AVAILABLE" == "true" ]]; then
+        # Get neighbors from VDC cabling using FRR module
+        local neighbors=$(get_neighbors_from_vdc_cabling "$config_file" "$sw_name")
+        generate_frr_switch_config "$sw_name" "$router_id" "$asn" "$neighbors" \
+            > "$bgp_config_dir/${sw_name}-bgp.conf"
+        log_success "✓ BGP configuration generated for $sw_name (using FRR module)"
+        return 0
+    fi
+
+    # Fallback: Legacy inline config generation
     # Find all neighbors from cabling configuration
     local neighbors=""
     local cable_count=$(yq eval '.cabling | length' "$config_file")
-    
+
     for i in $(seq 0 $((cable_count - 1))); do
         local src_device=$(yq eval ".cabling[$i].source.device" "$config_file")
         local src_iface=$(yq eval ".cabling[$i].source.interface" "$config_file")
         local dst_device=$(yq eval ".cabling[$i].destination.device" "$config_file")
         local dst_iface=$(yq eval ".cabling[$i].destination.interface" "$config_file")
-        
+
         if [[ "$src_device" == "$sw_name" ]]; then
             neighbors="${neighbors}\n neighbor $src_iface interface peer-group FABRIC"
         elif [[ "$dst_device" == "$sw_name" ]]; then
             neighbors="${neighbors}\n neighbor $dst_iface interface peer-group FABRIC"
         fi
     done
-    
-    # Generate configuration (similar to hypervisor but for SONiC)
+
+    # Generate configuration (legacy)
     cat > "$bgp_config_dir/${sw_name}-bgp.conf" <<EOF
 !
 ! BGP Configuration for $sw_name
@@ -262,7 +325,7 @@ route-map ALLOW-ALL permit 10
 !
 end
 EOF
-    
+
     log_success "✓ BGP configuration generated for $sw_name"
 }
 

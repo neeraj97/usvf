@@ -1,0 +1,144 @@
+# FRR Configuration - Multiple Devices Example
+#
+# This example shows how to configure FRR on multiple devices
+# in a single configuration file.
+#
+# Usage:
+#   ./frr/configure-frr.sh -c frr/examples/multi-device.yaml --dry-run
+#   ./frr/configure-frr.sh -c frr/examples/multi-device.yaml
+#
+# Configure specific device only:
+#   ./frr/configure-frr.sh -c frr/examples/multi-device.yaml -d leaf-1
+
+frr_config:
+  # Global defaults
+  defaults:
+    frr_version: "10.0"
+    bgp_peer_group: "FABRIC"
+
+  devices:
+    # Leaf Switch 1
+    - name: "leaf-1"
+      host: "192.168.1.11"
+      ssh_user: "ubuntu"
+      ssh_auth:
+        type: "key"
+        key_path: "~/.ssh/datacenter_key"
+      router_id: "10.2.0.1"
+      asn: 65101
+      type: "switch"
+      neighbors:
+        - interface: "enp2s0"    # To spine-1
+        - interface: "enp3s0"    # To spine-2
+        - interface: "enp4s0"    # To hypervisor-1
+        - interface: "enp5s0"    # To hypervisor-2
+
+    # Leaf Switch 2
+    - name: "leaf-2"
+      host: "192.168.1.12"
+      ssh_user: "ubuntu"
+      ssh_auth:
+        type: "key"
+        key_path: "~/.ssh/datacenter_key"
+      router_id: "10.2.0.2"
+      asn: 65102
+      type: "switch"
+      neighbors:
+        - interface: "enp2s0"    # To spine-1
+        - interface: "enp3s0"    # To spine-2
+        - interface: "enp4s0"    # To hypervisor-3
+        - interface: "enp5s0"    # To hypervisor-4
+
+    # Spine Switch 1
+    - name: "spine-1"
+      host: "192.168.1.21"
+      ssh_user: "ubuntu"
+      ssh_auth:
+        type: "key"
+        key_path: "~/.ssh/datacenter_key"
+      router_id: "10.3.0.1"
+      asn: 65201
+      type: "switch"
+      neighbors:
+        - interface: "enp2s0"    # To leaf-1
+        - interface: "enp3s0"    # To leaf-2
+
+    # Spine Switch 2
+    - name: "spine-2"
+      host: "192.168.1.22"
+      ssh_user: "ubuntu"
+      ssh_auth:
+        type: "key"
+        key_path: "~/.ssh/datacenter_key"
+      router_id: "10.3.0.2"
+      asn: 65202
+      type: "switch"
+      neighbors:
+        - interface: "enp2s0"    # To leaf-1
+        - interface: "enp3s0"    # To leaf-2
+
+    # Hypervisor 1
+    - name: "hypervisor-1"
+      host: "192.168.1.31"
+      ssh_user: "ubuntu"
+      ssh_auth:
+        type: "key"
+        key_path: "~/.ssh/datacenter_key"
+      router_id: "10.1.0.1"
+      asn: 65001
+      type: "hypervisor"         # Uses restricted redistribution
+      neighbors:
+        - interface: "enp2s0"    # To leaf-1
+      # Interfaces to match in redistribute connected route-map (default: lo1 dum-ex)
+      redistribute_interfaces:
+        - "lo1"
+        - "dum-ex"
+
+    # Hypervisor 2
+    - name: "hypervisor-2"
+      host: "192.168.1.32"
+      ssh_user: "ubuntu"
+      ssh_auth:
+        type: "key"
+        key_path: "~/.ssh/datacenter_key"
+      router_id: "10.1.0.2"
+      asn: 65002
+      type: "hypervisor"
+      neighbors:
+        - interface: "enp2s0"    # To leaf-1
+      redistribute_interfaces:
+        - "lo1"
+        - "dum-ex"
+
+    # Hypervisor 3
+    - name: "hypervisor-3"
+      host: "192.168.1.33"
+      ssh_user: "ubuntu"
+      ssh_auth:
+        type: "key"
+        key_path: "~/.ssh/datacenter_key"
+      router_id: "10.1.0.3"
+      asn: 65003
+      type: "hypervisor"
+      neighbors:
+        - interface: "enp2s0"    # To leaf-2
+      redistribute_interfaces:
+        - "lo1"
+        - "dum-ex"
+
+    # Hypervisor 4 - Custom loopback interfaces example
+    - name: "hypervisor-4"
+      host: "192.168.1.34"
+      ssh_user: "ubuntu"
+      ssh_auth:
+        type: "key"
+        key_path: "~/.ssh/datacenter_key"
+      router_id: "10.1.0.4"
+      asn: 65004
+      type: "hypervisor"
+      neighbors:
+        - interface: "enp2s0"    # To leaf-2
+      # Custom redistribute interfaces - only advertise lo1 and vxlan-vni100
+      redistribute_interfaces:
+        - "lo1"
+        - "vxlan-vni100"

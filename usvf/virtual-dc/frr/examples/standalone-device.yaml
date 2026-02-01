@@ -1,0 +1,50 @@
+# FRR Configuration - Standalone Device Example
+#
+# This example shows how to configure FRR on a single external device
+# (not managed by VDC) using explicit neighbor definitions.
+#
+# Usage:
+#   ./frr/configure-frr.sh -c frr/examples/standalone-device.yaml --dry-run
+#   ./frr/configure-frr.sh -c frr/examples/standalone-device.yaml
+
+frr_config:
+  # Global defaults (optional - applied to all devices unless overridden)
+  defaults:
+    frr_version: "10.0"
+    bgp_peer_group: "FABRIC"
+    route_map: "ALLOW-ALL"
+
+  devices:
+    - name: "my-switch"
+      # SSH connection details
+      host: "192.168.1.10"           # IP address or hostname
+      ssh_user: "ubuntu"             # SSH username
+      ssh_auth:
+        type: "key"                  # "key" or "password"
+        key_path: "~/.ssh/id_rsa"    # Path to SSH private key
+        # password: "secret"         # Uncomment for password auth
+
+      # BGP configuration
+      router_id: "10.1.0.1"          # BGP router ID (usually a loopback IP)
+      asn: 65001                      # BGP AS number
+
+      # Device type: "switch" or "hypervisor"
+      # - switch: redistributes all connected routes
+      # - hypervisor: redistributes only specified loopback interfaces
+      type: "switch"
+
+      # BGP neighbors (explicit definition)
+      # List all interfaces that connect to BGP peers
+      neighbors:
+        - interface: "enp2s0"
+          peer_group: "FABRIC"       # Optional: defaults to FABRIC
+        - interface: "enp3s0"
+          peer_group: "FABRIC"
+
+      # Redistribute connected interfaces (optional)
+      # Only used when type: "hypervisor"
+      # Specifies which interfaces to match in the redistribute connected route-map
+      # Default for hypervisors: ["lo1", "dum-ex"]
+      # redistribute_interfaces:
+      #   - "lo1"
+      #   - "dum-ex"

@@ -87,6 +87,8 @@ Steps:
     switches    - Deploy SONiC switch VMs
     cabling     - Configure virtual cabling
     wait-ssh    - Wait for all VMs to be SSH-accessible
+    frr-prepare - Install FRR on all VMs
+    frr-configure - Configure FRR/BGP on all VMs
     verify      - Verify the deployment
     all         - Run all steps (default)
 
@@ -387,7 +389,7 @@ main() {
     local steps_to_run=()
     
     if [[ "$STEP" == "all" ]]; then
-        steps_to_run=(validate prereqs network p2p-networks hypervisors switches cabling wait-ssh verify)
+        steps_to_run=(validate prereqs network p2p-networks hypervisors switches cabling wait-ssh frr-prepare frr-configure verify)
     else
         steps_to_run=("$STEP")
     fi
@@ -458,11 +460,47 @@ main() {
                 wait_for_all_vms "$CONFIG_FILE"
                 log_success "All VMs are SSH-accessible and ready"
                 ;;
+            frr-prepare)
+                if [[ "$VALIDATE_ONLY" == "true" ]]; then
+                    continue
+                fi
+                log_info "═══ Step 9: Installing FRR on All VMs ═══"
+                local frr_prepare_script="$PROJECT_ROOT/frr/prepare-frr.sh"
+                if [[ ! -f "$frr_prepare_script" ]]; then
+                    log_error "FRR prepare script not found: $frr_prepare_script"
+                    exit 1
+                fi
+                if [[ "$DRY_RUN" == "true" ]]; then
+                    log_info "[DRY-RUN] Would run: $frr_prepare_script --vdc-config $CONFIG_FILE"
+                else
+                    "$frr_prepare_script" --vdc-config "$CONFIG_FILE"
+                fi
+                log_success "FRR installation complete on all VMs"
+                ;;
+            frr-configure)
+                if [[ "$VALIDATE_ONLY" == "true" ]]; then
+                    continue
+                fi
+                log_info "═══ Step 10: Configuring FRR/BGP on All VMs ═══"
+                local frr_configure_script="$PROJECT_ROOT/frr/configure-frr.sh"
+                if [[ ! -f "$frr_configure_script" ]]; then
+                    log_error "FRR configure script not found: $frr_configure_script"
+                    exit 1
+                fi
+                if [[ "$DRY_RUN" == "true" ]]; then
+                    log_info "[DRY-RUN] Would run: $frr_configure_script --vdc-config $CONFIG_FILE"
+                    log_info "[DRY-RUN] Preview of FRR configurations:"
+                    "$frr_configure_script" --vdc-config "$CONFIG_FILE" --dry-run
+                else
+                    "$frr_configure_script" --vdc-config "$CONFIG_FILE"
+                fi
+                log_success "FRR/BGP configuration complete on all VMs"
+                ;;
             verify)
                 if [[ "$VALIDATE_ONLY" == "true" ]]; then
                     continue
                 fi
-                log_info "═══ Step 9: Verifying Deployment ═══"
+                log_info "═══ Step 11: Verifying Deployment ═══"
                 verify_deployment "$CONFIG_FILE"
                 log_success "Deployment verification complete"
                 ;;
@@ -481,9 +519,14 @@ main() {
         echo
         log_info "Next steps:"
         log_info "  1. Check VM status: virsh list --all"
-        log_info "  2. Access hypervisors via SSH (IPs are auto-assigned, check with: virsh domifaddr <vm-name>)"
-        log_info "  3. Verify BGP (already configured via cloud-init): ssh ubuntu@<vm-ip> 'vtysh -c \"show bgp summary\"'"
+        log_info "  2. Access hypervisors via SSH using management IPs from topology"
+        log_info "  3. Verify BGP: ssh ubuntu@<vm-ip> 'vtysh -c \"show bgp summary\"'"
         log_info "  4. View network topology: ./scripts/show-topology.sh"
+        log_info ""
+        log_info "FRR Management:"
+        log_info "  - Reconfigure FRR: ./frr/configure-frr.sh --vdc-config $CONFIG_FILE"
+        log_info "  - Reconfigure single device: ./frr/configure-frr.sh --vdc-config $CONFIG_FILE -d <device-name>"
+        log_info "  - Preview config: ./frr/configure-frr.sh --vdc-config $CONFIG_FILE --dry-run"
     fi
 }
 

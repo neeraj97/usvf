@@ -1,0 +1,80 @@
+# FRR Configuration - VDC Integration Example
+#
+# This example shows how to use the FRR module with an existing VDC topology.
+# The module will auto-discover devices and neighbors from the VDC cabling config.
+#
+# Usage:
+#   # Use VDC topology directly (recommended)
+#   ./frr/configure-frr.sh --vdc-config config/topology.yaml --dry-run
+#   ./frr/configure-frr.sh --vdc-config config/topology.yaml
+#
+#   # Configure specific device from VDC
+#   ./frr/configure-frr.sh --vdc-config config/topology.yaml -d hypervisor-1
+#
+#   # Verify FRR status on all VDC devices
+#   ./frr/configure-frr.sh --vdc-config config/topology.yaml --verify-only
+#
+# Note: This file is provided as documentation. The actual integration uses
+# --vdc-config to read directly from the VDC topology.yaml file.
+#
+# The VDC integration mode:
+# 1. Reads device info (router_id, asn, management.ip) from VDC topology
+# 2. Auto-discovers neighbors from VDC cabling configuration
+# 3. Uses VDC SSH keys from config/vdc-{dc_name}/ssh-keys/
+# 4. Applies hypervisor vs switch routing policies automatically
+
+# Example: If you want to override settings for specific VDC devices,
+# you can create a config like this and use -c instead of --vdc-config
+
+frr_config:
+  # Reference VDC topology for auto-discovery
+  # (This would be used by an enhanced version of the tool)
+  vdc_topology: "../config/topology.yaml"
+
+  # Global settings
+  defaults:
+    frr_version: "10.0"
+    bgp_peer_group: "FABRIC"
+
+  # Device-specific overrides (optional)
+  # These override values discovered from VDC topology
+  device_overrides:
+    hypervisor-1:
+      # Override loopback interfaces for redistribution
+      # Default: ["lo1", "dum-ex"]
+      # redistribute_interfaces:
+      #   - "lo1"
+      #   - "dum-ex"
+      #   - "vxlan-vni100"    # Add custom VXLAN interface
+      pass
+
+    hypervisor-2:
+      # Only advertise lo1 (remove dum-ex)
+      # redistribute_interfaces:
+      #   - "lo1"
+      pass
+
+    switch-1:
+      # Switches redistribute all connected by default
+      # No redistribute_interfaces needed
+      pass
+
+# Quick Reference: VDC Integration Commands
+#
+# 1. Deploy VDC first:
+#    ./scripts/deploy-virtual-dc.sh -c config/topology.yaml
+#
+# 2. Preview FRR configs for all VDC devices:
+#    ./frr/configure-frr.sh --vdc-config config/topology.yaml --dry-run
+#
+# 3. Reconfigure FRR on all VDC devices:
+#    ./frr/configure-frr.sh --vdc-config config/topology.yaml
+#
+# 4. Reconfigure FRR on specific device:
+#    ./frr/configure-frr.sh --vdc-config config/topology.yaml -d switch-1
+#
+# 5. Verify BGP status on all devices:
+#    ./frr/configure-frr.sh --vdc-config config/topology.yaml --verify-only
+#
+# 6. Use custom SSH key:
+#    ./frr/configure-frr.sh --vdc-config config/topology.yaml --ssh-key ~/.ssh/my_key
