@@ -1,0 +1,199 @@
+# Auto-generated Virtual DC Topology Configuration
+# Generated: 2026-01-23T19:22:30.753Z
+
+global:
+  datacenter_name: "virtual-dc-lab"
+  virtualization_platform: "kvm"
+  bgp_defaults:
+    unnumbered: true
+    ebgp_multihop: 1
+
+hypervisors:
+  - name: "hypervisor-1"
+    short_name: "hv1"
+    router_id: "10.1.0.1"
+    asn: 65001
+    management:
+      interface: "enp1s0"
+    data_interfaces:
+      - name: "enp2s0"
+        description: "Connection to switch-1"
+    resources:
+      cpu: 4
+      memory: 2048
+      disk: 15
+    # Additional disks for storage (optional)
+    additional_disks:
+      - name: "data1"
+        size: 10          # Size in GB
+        format: "raw"   # Disk format (qcow2, raw)
+
+  - name: "hypervisor-2"
+    short_name: "hv2"
+    router_id: "10.1.0.2"
+    asn: 65002
+    management:
+      interface: "enp1s0"
+    data_interfaces:
+      - name: "enp2s0"
+        description: "Connection to switch-1"
+    resources:
+      cpu: 4
+      memory: 2048
+      disk: 15
+    additional_disks:
+      - name: "data1"
+        size: 10
+        format: "raw"
+
+  - name: "hypervisor-3"
+    short_name: "hv3"
+    router_id: "10.1.0.3"
+    asn: 65003
+    management:
+      interface: "enp1s0"
+    data_interfaces:
+      - name: "enp2s0"
+        description: "Connection to switch-2"
+    resources:
+      cpu: 4
+      memory: 2048
+      disk: 15
+    additional_disks:
+      - name: "data1"
+        size: 10
+        format: "raw"
+
+  - name: "hypervisor-4"
+    short_name: "hv4"
+    router_id: "10.1.0.4"
+    asn: 65004
+    management:
+      interface: "enp1s0"
+    data_interfaces:
+      - name: "enp2s0"
+        description: "Connection to switch-2"
+    resources:
+      cpu: 4
+      memory: 2048
+      disk: 15
+    additional_disks:
+      - name: "data1"
+        size: 10
+        format: "raw"
+  
+  - name: "hypervisor-5"
+    short_name: "hv5"
+    router_id: "10.1.0.5"
+    asn: 65005
+    management:
+      interface: "enp1s0"
+    data_interfaces:
+      - name: "enp2s0"
+        description: "Connection to switch-2"
+    resources:
+      cpu: 4
+      memory: 2048
+      disk: 15
+    additional_disks:
+      - name: "data1"
+        size: 10
+        format: "raw"
+
+switches:
+  leaf:
+    - name: "switch-1"
+      router_id: "10.2.0.1"
+      asn: 65101
+      management:
+        interface: "enp1s0"
+      data_interfaces:
+        - name: "enp2s0"
+          description: "Connection to hypervisor-2"
+        - name: "enp3s0"
+          description: "Connection to hypervisor-1"
+        - name: "enp4s0"
+          description: "Connection to switch-2"
+      resources:
+        cpu: 2
+        memory: 2048
+        disk: 10
+
+    - name: "switch-2"
+      router_id: "10.2.0.2"
+      asn: 65102
+      management:
+        interface: "enp1s0"
+      data_interfaces:
+        - name: "enp2s0"
+          description: "Connection to hypervisor-3"
+        - name: "enp3s0"
+          description: "Connection to hypervisor-4"
+        - name: "enp4s0"
+          description: "Connection to hypervisor-5"
+        - name: "enp5s0"
+          description: "Connection to switch-1"
+      resources:
+        cpu: 2
+        memory: 2048
+        disk: 10
+
+  spine:
+    []
+  superspine:
+    []
+
+cabling:
+  - source:
+      device: "switch-1"
+      interface: "enp2s0"
+    destination:
+      device: "hypervisor-2"
+      interface: "enp2s0"
+    link_type: "p2p"
+    description: "switch-1 to hypervisor-2"
+
+  - source:
+      device: "hypervisor-1"
+      interface: "enp2s0"
+    destination:
+      device: "switch-1"
+      interface: "enp3s0"
+    link_type: "p2p"
+    description: "hypervisor-1 to switch-1"
+
+  - source:
+      device: "switch-2"
+      interface: "enp2s0"
+    destination:
+      device: "hypervisor-3"
+      interface: "enp2s0"
+    link_type: "p2p"
+    description: "switch-2 to hypervisor-3"
+
+  - source:
+      device: "hypervisor-4"
+      interface: "enp2s0"
+    destination:
+      device: "switch-2"
+      interface: "enp3s0"
+    link_type: "p2p"
+    description: "hypervisor-4 to switch-2"
+
+  - source:
+      device: "hypervisor-5"
+      interface: "enp2s0"
+    destination:
+      device: "switch-2"
+      interface: "enp4s0"
+    link_type: "p2p"
+    description: "hypervisor-5 to switch-2"
+
+  - source:
+      device: "switch-1"
+      interface: "enp4s0"
+    destination:
+      device: "switch-2"
+      interface: "enp5s0"
+    link_type: "p2p"
+    description: "switch-1 to switch-2"
