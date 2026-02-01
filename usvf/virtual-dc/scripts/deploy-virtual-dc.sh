@@ -465,6 +465,7 @@ main() {
                     continue
                 fi
                 log_info "═══ Step 9: Installing FRR on All VMs ═══"
+                sleep 120 # Wait additional time for cloud-init to finish and reboot need fix in future in proper way
                 local frr_prepare_script="$PROJECT_ROOT/frr/prepare-frr.sh"
                 if [[ ! -f "$frr_prepare_script" ]]; then
                     log_error "FRR prepare script not found: $frr_prepare_script"
