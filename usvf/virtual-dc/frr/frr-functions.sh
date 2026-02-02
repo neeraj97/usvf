@@ -136,6 +136,11 @@ hostname $device_name
 log syslog informational
 service integrated-vtysh-config
 !
+! Configure lo1 with router ID (managed by FRR, applied on restart/reboot)
+interface lo1
+ ip address $router_id/32
+ description BGP Router ID
+!
 ! BGP Configuration with Unnumbered Support
 router bgp $asn
  bgp router-id $router_id
@@ -418,6 +423,7 @@ wait_for_ssh() {
 
 # Deploy FRR configuration to remote device
 # Usage: ssh_deploy_frr_config <host> <auth_credential> <auth_type> <frr_config_content> [user]
+# Note: Router ID is configured in frr.conf itself (interface lo1 section)
 # Returns: 0 if successful, 1 if failed
 ssh_deploy_frr_config() {
     local host="$1"
@@ -435,32 +441,35 @@ ssh_deploy_frr_config() {
     local ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
     local result=0
 
+    # Build the deployment script
+    # Note: Router ID on lo1 is configured in frr.conf itself (interface lo1 section)
+    # FRR/zebra will apply it automatically on restart/reboot
+    local deploy_script="
+sudo cp /tmp/frr.conf /etc/frr/frr.conf
+sudo chown frr:frr /etc/frr/frr.conf
+sudo chmod 640 /etc/frr/frr.conf
+sudo systemctl restart frr
+sleep 3
+echo ''
+echo 'Router ID on lo1 (managed by FRR):'
+ip addr show lo1 2>/dev/null | grep -E 'inet ' || echo '  (waiting for FRR to apply...)'
+echo ''
+echo 'BGP Summary:'
+sudo vtysh -c 'show bgp summary' | head -20
+"
+
     if [[ "$auth_type" == "key" ]]; then
         # Copy config file
         scp $ssh_opts -i "$auth_credential" "$temp_config" "${user}@${host}:/tmp/frr.conf" 2>/dev/null
 
         # Apply configuration
-        ssh $ssh_opts -i "$auth_credential" "${user}@${host}" <<'ENDSSH' 2>/dev/null
-sudo cp /tmp/frr.conf /etc/frr/frr.conf
-sudo chown frr:frr /etc/frr/frr.conf
-sudo chmod 640 /etc/frr/frr.conf
-sudo systemctl restart frr
-sleep 3
-sudo vtysh -c "show bgp summary" | head -20
-ENDSSH
+        ssh $ssh_opts -i "$auth_credential" "${user}@${host}" "$deploy_script" 2>&1
         result=$?
     else
         # Password auth (requires sshpass)
         sshpass -p "$auth_credential" scp $ssh_opts "$temp_config" "${user}@${host}:/tmp/frr.conf" 2>/dev/null
 
-        sshpass -p "$auth_credential" ssh $ssh_opts "${user}@${host}" <<'ENDSSH' 2>/dev/null
-sudo cp /tmp/frr.conf /etc/frr/frr.conf
-sudo chown frr:frr /etc/frr/frr.conf
-sudo chmod 640 /etc/frr/frr.conf
-sudo systemctl restart frr
-sleep 3
-sudo vtysh -c "show bgp summary" | head -20
-ENDSSH
+        sshpass -p "$auth_credential" ssh $ssh_opts "${user}@${host}" "$deploy_script" 2>&1
         result=$?
     fi
 

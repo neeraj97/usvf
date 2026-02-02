@@ -335,7 +335,7 @@ configure_device_from_config() {
         return 1
     fi
 
-    # Deploy FRR configuration
+    # Deploy FRR configuration (router ID on lo1 is in frr.conf, applied by FRR)
     ssh_deploy_frr_config "$host" "$auth_credential" "$auth_type" "$frr_config" "$ssh_user"
 }
 
