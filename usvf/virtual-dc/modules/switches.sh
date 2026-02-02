@@ -176,6 +176,9 @@ write_files:
 runcmd:
   - echo "Starting cloud-init setup for $sw_name..."
   - sysctl -p /etc/sysctl.d/99-forwarding.conf
+  - sleep 2
+  - echo "Verifying lo1 interface..."
+  - ip addr show lo1
 EOF
 
     # Add commands to bring up data interfaces
@@ -188,12 +191,12 @@ EOF
 
     cat >> "$cloud_init_dir/user-data" <<EOF
   - |
-    cat > /etc/motd <<'MOTD'
+    cat > /etc/motd <<MOTD
     ============================================================
     Ubuntu 24.04 LTS (Noble Numbat) - Switch Node
     ============================================================
     Hostname:   $sw_name
-    Router ID:  $router_id
+    Router ID:  $router_id (on lo1)
     BGP ASN:    $asn
     Role:       Virtual DC Switch
 
@@ -203,6 +206,7 @@ EOF
       - vtysh               # Enter FRR CLI
       - show ip bgp summary # Check BGP status
       - show ip route       # View routing table
+      - ip addr show lo1    # View lo1 interface
     ============================================================
     MOTD
 
@@ -249,6 +253,14 @@ EOF
     link-local: [ ipv6 ]
 EOF
     done
+
+    # Add lo1 dummy interface for BGP router ID (persistent across reboots)
+    cat >> "$cloud_init_dir/network-config" <<EOF
+dummy-devices:
+  lo1:
+    addresses:
+      - $router_id/32
+EOF
 
     # Create cloud-init ISO
     local iso_path=$(get_vdc_cloud_init_iso "$dc_name" "$full_vm_name")
