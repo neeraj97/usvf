@@ -206,10 +206,18 @@ EOF
         if [[ -n "$redistribute_interfaces" ]]; then
             cat <<EOF
 ! Redistribute only connected routes from specified interfaces
-route-map $redistribute_route_map permit 10
- match interface $redistribute_interfaces
+! Each interface needs a separate route-map permit entry
+EOF
+            # Create separate permit entry for each interface
+            local seq=10
+            for iface in $redistribute_interfaces; do
+                cat <<EOF
+route-map $redistribute_route_map permit $seq
+ match interface $iface
 !
 EOF
+                seq=$((seq + 10))
+            done
         else
             cat <<EOF
 route-map $redistribute_route_map permit 10
