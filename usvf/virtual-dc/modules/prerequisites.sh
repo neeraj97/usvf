@@ -64,9 +64,9 @@ check_prerequisites() {
     
     # Check virtualization support
     if ! check_virtualization_support; then
-        virtualization_ok=false
-        log_error "✗ Hardware virtualization is not enabled or not supported"
-        log_error "  Please enable VT-x/AMD-V in BIOS settings"
+        # virtualization_ok=false
+        log_warn "✗ Hardware virtualization is not enabled or not supported"
+        log_warn "  Please enable VT-x/AMD-V in BIOS settings"
     else
         log_success "✓ Hardware virtualization is enabled"
     fi

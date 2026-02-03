@@ -12,6 +12,7 @@ openstack_release: "2024.1"
 # VIP on Controller Loopbacks (Anycast)
 kolla_internal_vip_address: "10.100.0.254"
 enable_keepalived: "no"
+enable_haproxy: "yes"
 
 # Bind services to Host Loopbacks
 api_interface_address: "{{ api_ip }}"
