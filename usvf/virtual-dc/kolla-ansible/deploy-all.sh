@@ -61,6 +61,11 @@ phase2_create_base_configs() {
 # =============================================================================
 phase3_openstack_bootstrap() {
     log_section "PHASE 3: OpenStack Bootstrap"
+    sleep 100
+
+    # Prevent APT lock race conditions during bootstrap
+    log_info "Preparing nodes for bootstrap (disabling unattended-upgrades and waiting for APT locks)..."
+    bash "$OPENSTACK_SCRIPT" prepare-bootstrap
 
     log_info "Running Kolla-Ansible bootstrap..."
     log_info "This will install and configure Docker on all nodes"

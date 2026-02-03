@@ -299,59 +299,41 @@ phase1_prerequisites() {
     done
 
     for host in "${ALL_HOSTS[@]}"; do
-        log_info "Installing docker.io and ceph-common on $host..."
+        # Verify Docker is already installed (from bootstrap phase)
+        if ! ssh ${SSH_OPTS} ${SSH_USER}@"$host" "which docker > /dev/null 2>&1"; then
+            log_error "Docker is not installed on $host! Bootstrap should have installed it."
+            exit 1
+        fi
+
+        # Verify Docker is active
+        if ! ssh ${SSH_OPTS} ${SSH_USER}@"$host" "systemctl is-active docker | grep -q '^active\$'" 2>/dev/null; then
+            log_error "Docker is not active on $host! Bootstrap should have started it."
+            exit 1
+        fi
+
+        log_info "Docker already installed and active on $host (from bootstrap)"
+        log_info "Installing ceph-common on $host..."
+
         # First fix any dpkg interruption issues
         ssh ${SSH_OPTS} ${SSH_USER}@"$host" "sudo dpkg --configure -a 2>/dev/null" || true
 
-        # Retry logic for installation
+        # Retry logic for ceph-common installation only
         local max_retries=3
         local retry=0
         local success=false
         while [ $retry -lt $max_retries ]; do
-            if ssh ${SSH_OPTS} ${SSH_USER}@"$host" "sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker.io ceph-common" 2>/dev/null; then
+            if ssh ${SSH_OPTS} ${SSH_USER}@"$host" "sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ceph-common" 2>/dev/null; then
                 success=true
                 break
             fi
             retry=$((retry + 1))
-            log_warn "Retry $retry/$max_retries for $host..."
-            # Fix dpkg again before retry
+            log_warn "Retry $retry/$max_retries for ceph-common installation on $host..."
             ssh ${SSH_OPTS} ${SSH_USER}@"$host" "sudo dpkg --configure -a 2>/dev/null" || true
             sleep 10
         done
 
-        # Verify docker is actually installed
-        if ! ssh ${SSH_OPTS} ${SSH_USER}@"$host" "which docker > /dev/null 2>&1"; then
-            log_error "Docker installation failed on $host!"
-            exit 1
-        fi
-        
-        # Fix Docker systemd configuration to prevent "activating" state issue
-        log_info "Configuring Docker systemd unit on $host..."
-        ssh ${SSH_OPTS} ${SSH_USER}@"$host" "
-            sudo mkdir -p /etc/systemd/system/docker.service.d
-            sudo bash -c 'cat > /etc/systemd/system/docker.service.d/override.conf << EOF
-[Service]
-Type=notify
-NotifyAccess=main
-EOF'
-            sudo systemctl daemon-reload
-            sudo systemctl restart docker
-            sudo systemctl enable docker
-        "
-        
-        # Verify Docker is active (not just activating)
-        local wait_count=0
-        while [ $wait_count -lt 12 ]; do
-            if ssh ${SSH_OPTS} ${SSH_USER}@"$host" "systemctl is-active docker | grep -q '^active\$'" 2>/dev/null; then
-                log_info "Docker is active on $host"
-                break
-            fi
-            wait_count=$((wait_count + 1))
-            sleep 5
-        done
-        
-        if [ $wait_count -ge 12 ]; then
-            log_error "Docker failed to become active on $host"
+        if [ "$success" = false ]; then
+            log_error "Failed to install ceph-common on $host after $max_retries attempts"
             exit 1
         fi
     done

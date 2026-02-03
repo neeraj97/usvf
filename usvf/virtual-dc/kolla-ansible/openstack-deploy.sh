@@ -487,6 +487,53 @@ install_kolla_ansible() {
     log_info "Installing Ansible dependencies..."
     kolla-ansible install-deps
 
+    # Patch kolla_docker_worker.py to handle 409 Conflict errors
+    # This fixes a race condition where Docker's container list API hasn't updated
+    # but the create API rejects duplicate names, causing spurious 409 errors
+    log_info "Patching Kolla-Ansible docker worker for 409 Conflict handling..."
+    local worker_file="$KOLLA_VENV/share/kolla-ansible/ansible/module_utils/kolla_docker_worker.py"
+    if [ -f "$worker_file" ]; then
+        python3 -c "
+import sys
+filepath = '$worker_file'
+with open(filepath, 'r') as f:
+    content = f.read()
+
+old = '''    def create_container(self):
+        self.changed = True
+        options = self.build_container_options()
+        self.dc.create_container(**options)
+        if self.params.get('restart_policy') != 'oneshot':
+            self.changed |= self.systemd.create_unit_file()'''
+
+new = '''    def create_container(self):
+        self.changed = True
+        options = self.build_container_options()
+        try:
+            self.dc.create_container(**options)
+        except docker.errors.APIError as e:
+            if '409' in str(e):
+                # Container name conflict (race condition) - remove and retry
+                name = self.params.get('name')
+                self.dc.remove_container(name, force=True)
+                import time
+                time.sleep(1)
+                self.dc.create_container(**options)
+            else:
+                raise
+        if self.params.get('restart_policy') != 'oneshot':
+            self.changed |= self.systemd.create_unit_file()'''
+
+if old in content:
+    content = content.replace(old, new)
+    with open(filepath, 'w') as f:
+        f.write(content)
+    print('Patched kolla_docker_worker.py successfully')
+else:
+    print('Patch already applied or code structure changed')
+"
+    fi
+
     log_info "Creating Kolla config directory..."
     sudo mkdir -p "$KOLLA_CONFIG"
     sudo chown $USER:$USER "$KOLLA_CONFIG"
@@ -1428,6 +1475,44 @@ install_ceph_client() {
 }
 
 # =============================================================================
+# Prepare Bootstrap: Stop unattended-upgrades and wait for APT locks
+# =============================================================================
+
+prepare_bootstrap() {
+    log_section "Preparing nodes for bootstrap"
+
+    log_info "Disabling unattended-upgrades and waiting for APT locks on all nodes..."
+
+    for node in "${ALL_NODES[@]}"; do
+        log_info "Preparing $node..."
+        run_on_node "$node" "
+            # Stop and disable unattended-upgrades
+            sudo systemctl stop unattended-upgrades 2>/dev/null || true
+            sudo systemctl disable unattended-upgrades 2>/dev/null || true
+            sudo systemctl stop apt-daily.timer 2>/dev/null || true
+            sudo systemctl stop apt-daily-upgrade.timer 2>/dev/null || true
+            sudo systemctl disable apt-daily.timer 2>/dev/null || true
+            sudo systemctl disable apt-daily-upgrade.timer 2>/dev/null || true
+
+            # Wait for any running APT processes to complete (up to 2 minutes)
+            echo 'Waiting for APT locks to clear...'
+            for i in {1..60}; do
+                if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; then
+                    echo 'APT locks cleared'
+                    break
+                fi
+                if [ \$i -eq 60 ]; then
+                    echo 'Warning: APT lock wait timed out, proceeding anyway'
+                fi
+                sleep 2
+            done
+        " 2>/dev/null || true
+    done
+
+    log_success "All nodes prepared for bootstrap"
+}
+
+# =============================================================================
 # Running Kolla-Ansible Bootstrap: Run Kolla-Ansible Bootstrap
 # =============================================================================
 
@@ -1561,26 +1646,19 @@ run_deploy() {
 
     ensure_all_healthy
 
-    # Pre-deployment cleanup: Remove containers that might conflict
-    # (created by bootstrap but not properly handled by deploy)
-    log_info "Pre-deployment cleanup: Removing potential conflicting containers and waiting for apt locks..."
+    # Pre-deployment cleanup: Remove ALL common containers to prevent handler conflicts
+    # The deploy task creates containers, then handlers try to recreate them → 409 Conflict
+    # Solution: Remove ALL common containers before deploy to ensure clean state
+    log_info "Pre-deployment cleanup: Removing ALL common containers to prevent handler conflicts..."
     for node in "${ALL_NODES[@]}"; do
         run_on_node "$node" "sudo bash -c '
-            # Wait for any apt/dpkg locks to clear (prevent race conditions during bootstrap)
-            for i in {1..30}; do
-                if ! fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; then
-                    break
-                fi
-                echo \"Waiting for apt lock to clear (attempt \$i/30)...\"
-                sleep 2
-            done
+            # Remove ALL common containers (including running ones) that handlers will try to restart
+            # This prevents 409 Conflict when handlers try to recreate freshly-created containers
+            docker ps -a --format \"{{.Names}}\" 2>/dev/null | \
+            grep -E \"^(fluentd|kolla_toolbox|cron)$\" | \
+            xargs -r docker rm -f 2>/dev/null || true
 
-            # Remove stopped/created/exited/dead containers that might conflict
-            for status in exited created dead; do
-                docker ps -a --filter \"status=\$status\" --format \"{{.Names}}\" 2>/dev/null | \
-                grep -E \"(fluentd|kolla_toolbox|haproxy|cron|openvswitch)\" | \
-                xargs -r docker rm -f 2>/dev/null || true
-            done
+            echo \"Common containers removed\"
         '" 2>/dev/null || true
     done
     log_info "Pre-deployment cleanup complete"
@@ -1613,9 +1691,11 @@ run_deploy() {
             log_info "Cleaning up failed containers on all nodes..."
             for node in "${ALL_NODES[@]}"; do
                 run_on_node "$node" "sudo bash -c '
-                    # Remove failed/stopped/created containers (all problematic ones)
-                    docker ps -a --filter \"status=exited\" --format \"{{.Names}}\" 2>/dev/null | grep -E \"(fluentd|kolla_toolbox|haproxy|openvswitch|cron)\" | xargs -r docker rm -f 2>/dev/null || true
-                    docker ps -a --filter \"status=created\" --format \"{{.Names}}\" 2>/dev/null | grep -E \"(fluentd|kolla_toolbox|haproxy|openvswitch|cron)\" | xargs -r docker rm -f 2>/dev/null || true
+                    # AGGRESSIVE CLEANUP: Remove ALL matching containers (including running)
+                    # This is safe because the previous deployment attempt failed
+                    docker ps -a --format \"{{.Names}}\" 2>/dev/null | \
+                    grep -E \"^(fluentd|kolla_toolbox|haproxy|cron|openvswitch_vswitchd|openvswitch_db)$\" | \
+                    xargs -r docker rm -f 2>/dev/null || true
                 '" 2>/dev/null || true
             done
         fi
@@ -1734,6 +1814,9 @@ case "${1:-}" in
         ;;
     ceph-client)
         install_ceph_client
+        ;;
+    prepare-bootstrap)
+        prepare_bootstrap
         ;;
     bootstrap)
         run_bootstrap
