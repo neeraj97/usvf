@@ -75,11 +75,11 @@ CONTROLLERS=("192.168.10.11" "192.168.10.12" "192.168.10.13")
 CONTROLLER_NAMES=("hypervisor-1" "hypervisor-2" "hypervisor-3")
 
 # Compute nodes (derived from subnet)
-COMPUTES=("192.168.10.14" "192.168.10.15")
-COMPUTE_NAMES=("hypervisor-4" "hypervisor-5")
+COMPUTES=("192.168.10.11" "192.168.10.12" "192.168.10.13")
+COMPUTE_NAMES=("hypervisor-1" "hypervisor-2" "hypervisor-3")
 
 # All nodes
-ALL_NODES=("${CONTROLLERS[@]}" "${COMPUTES[@]}")
+ALL_NODES=("${CONTROLLERS[@]}")
 
 # VIP for OpenStack API (each DC gets a unique VIP)
 # dc1 (192.168.10) -> 10.100.0.254
@@ -446,11 +446,11 @@ fix_config_formatting() {
 }
 
 # =============================================================================
-# Phase 1: Install Kolla-Ansible on Deployment Host
+# Installing Kolla-Ansible: Install Kolla-Ansible on Deployment Host
 # =============================================================================
 
 install_kolla_ansible() {
-    log_section "Phase 1: Installing Kolla-Ansible on Deployment Host"
+    log_section "Installing Kolla-Ansible: Installing Kolla-Ansible on Deployment Host"
 
     # Clean SSH known_hosts first (in case VMs were destroyed and recreated)
     clean_ssh_known_hosts
@@ -490,11 +490,11 @@ install_kolla_ansible() {
 }
 
 # =============================================================================
-# Phase 2: Create Ceph Users for OpenStack
+# Creating Ceph Pools and Users: Create Ceph Users for OpenStack
 # =============================================================================
 
 create_ceph_users() {
-    log_section "Phase 2: Creating Ceph Pools and Users for OpenStack"
+    log_section "Creating Ceph Pools and Users: Creating Ceph Pools and Users for OpenStack"
 
     # Ceph must be running for this phase
     ensure_all_healthy
@@ -584,11 +584,11 @@ create_ceph_users() {
 }
 
 # =============================================================================
-# Phase 3: Setup Kolla Configuration Files
+# Setting Up Kolla Configuration: Setup Kolla Configuration Files
 # =============================================================================
 
 setup_kolla_configs() {
-    log_section "Phase 3: Setting Up Kolla Configuration Files"
+    log_section "Setting Up Kolla Configuration: Setting Up Kolla Configuration Files"
 
     # Create directory structure
     log_info "Creating config directory structure..."
@@ -723,7 +723,7 @@ EOF
     cat > "$KOLLA_CONFIG/multinode" << EOF
 # OpenStack Multinode Inventory
 # Control Plane: hypervisor-1,2,3
-# Compute/Storage: hypervisor-4,5
+# Compute/Storage: hypervisor-1,2,3
 # Subnet: 192.168.10.0/24
 
 [control]
@@ -737,8 +737,9 @@ control02
 control03
 
 [compute]
-compute01 ansible_host=192.168.10.14 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.4 tunnel_ip=10.1.0.4
-compute02 ansible_host=192.168.10.15 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.5 tunnel_ip=10.1.0.5
+compute01 ansible_host=192.168.10.11 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.1 tunnel_ip=10.1.0.1
+compute02 ansible_host=192.168.10.12 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.2 tunnel_ip=10.1.0.2
+compute03 ansible_host=192.168.10.13 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.3 tunnel_ip=10.1.0.3
 
 [monitoring]
 control01
@@ -1355,11 +1356,11 @@ EOF
 }
 
 # =============================================================================
-# Phase 4: Setup VIP on Controllers
+# Setting Up Anycast VIP: Setup VIP on Controllers
 # =============================================================================
 
 setup_vip() {
-    log_section "Phase 4: Setting Up Anycast VIP on Controllers"
+    log_section "Setting Up Anycast VIP: Setting Up Anycast VIP on Controllers"
 
     for i in "${!CONTROLLERS[@]}"; do
         node="${CONTROLLERS[$i]}"
@@ -1385,11 +1386,11 @@ setup_vip() {
 }
 
 # =============================================================================
-# Phase 5: Install Ceph Client on All Nodes
+# Installing Ceph Client: Install Ceph Client on All Nodes
 # =============================================================================
 
 install_ceph_client() {
-    log_section "Phase 5: Installing Ceph Client on All Nodes"
+    log_section "Installing Ceph Client: Installing Ceph Client on All Nodes"
     log_info "Waiting for apt locks..."
     for host in "${ALL_NODES[@]}"; do
         echo -n "Checking APT locks on $host... "
@@ -1412,11 +1413,11 @@ install_ceph_client() {
 }
 
 # =============================================================================
-# Phase 6: Run Kolla-Ansible Bootstrap
+# Running Kolla-Ansible Bootstrap: Run Kolla-Ansible Bootstrap
 # =============================================================================
 
 run_bootstrap() {
-    log_section "Phase 6: Running Kolla-Ansible Bootstrap"
+    log_section "Running Kolla-Ansible Bootstrap: Running Kolla-Ansible Bootstrap"
 
     # ---------------------------------------------------------------
     # Step 0: Check if Ceph cluster is actually installed and running
@@ -1519,11 +1520,11 @@ run_bootstrap() {
 }
 
 # =============================================================================
-# Phase 7: Run Kolla-Ansible Prechecks
+# Running Kolla-Ansible Prechecks: Run Kolla-Ansible Prechecks
 # =============================================================================
 
 run_prechecks() {
-    log_section "Phase 7: Running Kolla-Ansible Prechecks"
+    log_section "Running Kolla-Ansible Prechecks: Running Kolla-Ansible Prechecks"
 
     ensure_all_healthy
 
@@ -1537,11 +1538,11 @@ run_prechecks() {
 }
 
 # =============================================================================
-# Phase 8: Run Kolla-Ansible Deploy
+# Running Kolla-Ansible Deploy: Run Kolla-Ansible Deploy
 # =============================================================================
 
 run_deploy() {
-    log_section "Phase 8: Running Kolla-Ansible Deploy"
+    log_section "Running Kolla-Ansible Deploy: Running Kolla-Ansible Deploy"
 
     ensure_all_healthy
 
@@ -1586,11 +1587,11 @@ run_deploy() {
 }
 
 # =============================================================================
-# Phase 9: Run Post-Deploy
+# Running Post-Deploy: Run Post-Deploy
 # =============================================================================
 
 run_post_deploy() {
-    log_section "Phase 9: Running Post-Deploy"
+    log_section "Running Post-Deploy: Running Post-Deploy"
 
     source "$KOLLA_VENV/bin/activate"
     cd "$KOLLA_CONFIG"
@@ -1602,11 +1603,11 @@ run_post_deploy() {
 }
 
 # =============================================================================
-# Phase 10: Verify Deployment
+# Verifying Deployment: Verify Deployment
 # =============================================================================
 
 verify_deployment() {
-    log_section "Phase 10: Verifying Deployment"
+    log_section "Verifying Deployment: Verifying Deployment"
 
     source "$KOLLA_VENV/bin/activate"
     source "$KOLLA_CONFIG/admin-openrc.sh"
