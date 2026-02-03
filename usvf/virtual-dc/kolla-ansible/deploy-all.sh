@@ -11,7 +11,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OPENSTACK_SCRIPT="$SCRIPT_DIR/openstack-deploy.sh"
-CEPH_SCRIPT="$(dirname "$SCRIPT_DIR")/virtual-dc/scripts/ceph-cluster-setup.sh"
+CEPH_SCRIPT="$(dirname "$SCRIPT_DIR")/scripts/ceph-cluster-setup.sh"
 
 # Color codes
 RED='\033[0;31m'
