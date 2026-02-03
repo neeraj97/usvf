@@ -27,31 +27,68 @@ set -e  # Exit on error
 # Configuration Variables
 # =============================================================================
 
+# Subnet base (REQUIRED - use --subnet=192.168.10 or --subnet=192.168.11)
+SUBNET_BASE=""
+
+# Parse command line arguments
+for arg in "$@"; do
+    case $arg in
+        --subnet=*)
+            SUBNET_BASE="${arg#*=}"
+            SUBNET_BASE="${SUBNET_BASE%.0/24}"
+            SUBNET_BASE="${SUBNET_BASE%.0}"
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 --subnet=<subnet_base> [phase]"
+            echo "  Example: $0 --subnet=192.168.10          # full deploy on dc1"
+            echo "  Example: $0 --subnet=192.168.11          # full deploy on dc2"
+            echo "  Example: $0 --subnet=192.168.11 bootstrap # bootstrap only on dc2"
+            exit 0
+            ;;
+    esac
+done
+
+# Validate subnet is provided
+# if [ -z "$SUBNET_BASE" ]; then
+#     echo "ERROR: --subnet is required"
+#     echo "Usage: $0 --subnet=192.168.10   # for dc1"
+#     echo "       $0 --subnet=192.168.11   # for dc2"
+#     exit 1
+# fi
+
 # Deployment host settings
 KOLLA_VENV="$HOME/kolla-venv"
+# Each DC gets its own kolla config directory to avoid conflicts
+# dc1 (192.168.10) -> /etc/kolla-dc1
+# dc2 (192.168.11) -> /etc/kolla-dc2
+# SUBNET_OCTET="${SUBNET_BASE##*.}"  # Extract last octet (10, 11, etc.)
 KOLLA_CONFIG="/etc/kolla"
 
 # Ceph admin node (where to run ceph commands)
 CEPH_ADMIN_NODE="hypervisor-1"
 CEPH_ADMIN_IP="192.168.10.11"
 
-# Controller nodes
+# Controller nodes (derived from subnet)
 CONTROLLERS=("192.168.10.11" "192.168.10.12" "192.168.10.13")
 CONTROLLER_NAMES=("hypervisor-1" "hypervisor-2" "hypervisor-3")
 
-# Compute nodes
+# Compute nodes (derived from subnet)
 COMPUTES=("192.168.10.14" "192.168.10.15")
 COMPUTE_NAMES=("hypervisor-4" "hypervisor-5")
 
 # All nodes
 ALL_NODES=("${CONTROLLERS[@]}" "${COMPUTES[@]}")
 
-# VIP for OpenStack API
+# VIP for OpenStack API (each DC gets a unique VIP)
+# dc1 (192.168.10) -> 10.100.0.254
+# dc2 (192.168.11) -> 10.100.0.253
+# dc3 (192.168.12) -> 10.100.0.252, etc.
 VIP="10.100.0.254"
 
 # Kolla-Ansible version
-KOLLA_VERSION="18.8.0"
-OPENSTACK_RELEASE="2024.1"
+KOLLA_VERSION="19.2.0"
+OPENSTACK_RELEASE="2024.2"
 
 # SSH user for nodes
 SSH_USER="ubuntu"
@@ -94,13 +131,303 @@ log_section() {
 run_on_node() {
     local node=$1
     shift
-    ssh -o StrictHostKeyChecking=no ${SSH_USER}@${node} "$@"
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${SSH_USER}@${node} "$@"
 }
 
 run_on_node_sudo() {
     local node=$1
     shift
-    ssh -o StrictHostKeyChecking=no ${SSH_USER}@${node} "sudo $@"
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${SSH_USER}@${node} "sudo $@"
+}
+
+wait_for_apt_lock() {
+    local host=$1
+    local max_wait=300
+    local interval=5
+    local elapsed=0
+
+    while [ $elapsed -lt $max_wait ]; do
+        if run_on_node "$host" "sudo bash -c '
+            ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 &&
+            ! fuser /var/lib/dpkg/lock >/dev/null 2>&1 &&
+            ! fuser /var/lib/apt/lists/lock >/dev/null 2>&1 &&
+            ! fuser /var/cache/apt/archives/lock >/dev/null 2>&1
+        '"; then
+            return 0
+        fi
+
+        sleep $interval
+        elapsed=$((elapsed + interval))
+    done
+
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# clean_ssh_known_hosts: Remove stale SSH host keys for all hypervisors
+# This is needed when VMs are destroyed and recreated with new SSH keys
+# ---------------------------------------------------------------------------
+clean_ssh_known_hosts() {
+    log_info "Cleaning SSH known_hosts for all hypervisors..."
+
+    # Remove old keys for all nodes
+    for ip in "${CONTROLLERS[@]}" "${COMPUTES[@]}"; do
+        ssh-keygen -f "$HOME/.ssh/known_hosts" -R "$ip" 2>/dev/null || true
+    done
+
+    # Accept new keys with StrictHostKeyChecking=accept-new
+    for ip in "${CONTROLLERS[@]}" "${COMPUTES[@]}"; do
+        ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 ubuntu@"$ip" 'echo OK' 2>/dev/null || true
+    done
+
+    log_success "SSH known_hosts cleaned and new keys accepted"
+}
+
+# ---------------------------------------------------------------------------
+# ensure_docker_running: Make Docker work on a node regardless of current state
+# Handles: docker not installed, docker failed, docker.socket masked, etc.
+# ---------------------------------------------------------------------------
+ensure_docker_running() {
+    local node=$1
+    run_on_node "$node" "sudo bash -c '
+        if ! command -v docker &>/dev/null; then
+            echo \"Docker not installed on \$(hostname), skipping\"
+            exit 0
+        fi
+        # Reset any failed state
+        systemctl reset-failed docker 2>/dev/null || true
+        # Unmask socket (kolla-ansible sometimes masks it)
+        systemctl unmask docker.socket 2>/dev/null || true
+        # Apply systemd drop-in so Docker can always restart cleanly
+        mkdir -p /etc/systemd/system/docker.service.d
+        cat > /etc/systemd/system/docker.service.d/kolla-ceph-compat.conf << DROPEOF
+[Unit]
+After=docker.socket
+[Service]
+ExecStartPre=/bin/bash -c \"systemctl unmask docker.socket 2>/dev/null; systemctl start docker.socket 2>/dev/null; true\"
+DROPEOF
+        systemctl daemon-reload
+        # Start socket then service
+        systemctl start docker.socket 2>/dev/null || true
+        systemctl start docker 2>/dev/null || true
+        if systemctl is-active --quiet docker; then
+            echo \"Docker OK on \$(hostname)\"
+        else
+            echo \"Docker FAILED on \$(hostname) - attempting full restart\" >&2
+            rm -f /var/run/docker.pid 2>/dev/null || true
+            systemctl restart docker
+        fi
+    '" 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# ensure_ceph_running: Start all Ceph daemons on a node
+# Handles: daemons stopped from previous bootstrap, target not started, etc.
+# ---------------------------------------------------------------------------
+ensure_ceph_running() {
+    local node=$1
+    run_on_node "$node" "sudo bash -c '
+        # Unmask in case it was masked
+        systemctl unmask ceph.target 2>/dev/null || true
+        # Start the ceph target
+        systemctl start ceph.target 2>/dev/null || true
+        # Start all ceph-related targets (ceph-<fsid>.target)
+        for tgt in \$(systemctl list-unit-files --type=target --all --no-legend 2>/dev/null | grep \"ceph-\" | awk \"{print \\\$1}\"); do
+            systemctl unmask \"\$tgt\" 2>/dev/null || true
+            systemctl start \"\$tgt\" 2>/dev/null || true
+        done
+    '" 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# ensure_all_healthy: Bring Docker + Ceph to a healthy state on all nodes
+# Call this before any phase that depends on working Docker or Ceph.
+# ---------------------------------------------------------------------------
+ensure_all_healthy() {
+    log_info "Ensuring Docker and Ceph are running on all nodes..."
+    for node in "${ALL_NODES[@]}"; do
+        ensure_docker_running "$node"
+        ensure_ceph_running "$node"
+    done
+    # Give Ceph daemons a moment to form quorum
+    sleep 5
+}
+
+# ---------------------------------------------------------------------------
+# stop_all_ceph: Aggressively stop every Ceph daemon + container on a node
+# Used before bootstrap so Docker can restart without Ceph blocking it.
+# ---------------------------------------------------------------------------
+stop_all_ceph() {
+    local node=$1
+    run_on_node "$node" "sudo bash -c '
+        # Stop ceph targets
+        for tgt in \$(systemctl list-units --type=target --all --no-legend 2>/dev/null | grep \"ceph\" | awk \"{print \\\$1}\"); do
+            systemctl stop \"\$tgt\" 2>/dev/null || true
+        done
+        systemctl stop ceph.target 2>/dev/null || true
+        # Stop every individual ceph service unit
+        for svc in \$(systemctl list-units --type=service --all --no-legend 2>/dev/null | grep \"ceph\" | awk \"{print \\\$1}\"); do
+            systemctl stop \"\$svc\" 2>/dev/null || true
+        done
+        sleep 2
+        # Kill any remaining ceph containers
+        if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+            docker ps -q --filter name=ceph | xargs -r docker stop --time=5 2>/dev/null || true
+            docker ps -q --filter name=ceph | xargs -r docker kill 2>/dev/null || true
+        fi
+    '" 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# nuke_ceph_containers: Remove ALL ceph containers + mask ceph.target
+# This is needed before kolla-ansible bootstrap because:
+#   1. Kolla masks docker.socket, installs docker, then starts docker
+#   2. When docker starts, it tries to restore containers with restart=always
+#   3. Ceph containers (managed by cephadm) have restart=always
+#   4. If ceph containers fail to start (resources unavailable), docker crashes
+# Solution: Remove ceph containers entirely before bootstrap. cephadm will
+# recreate them when we unmask and start ceph.target afterward.
+# ---------------------------------------------------------------------------
+nuke_ceph_containers() {
+    local node=$1
+    log_info "Removing ceph containers and masking ceph.target on $node..."
+    run_on_node "$node" "sudo bash -c '
+        # 1. Mask ceph.target so systemd wont restart ceph during docker changes
+        systemctl mask ceph.target 2>/dev/null || true
+
+        # 2. Stop all ceph systemd units (targets + template services)
+        for unit in \$(systemctl list-units --type=target --all --no-legend 2>/dev/null | grep \"ceph\" | awk \"{print \\\$1}\"); do
+            systemctl stop \"\$unit\" 2>/dev/null || true
+            systemctl mask \"\$unit\" 2>/dev/null || true
+        done
+        for svc in \$(systemctl list-units --type=service --all --no-legend 2>/dev/null | grep \"ceph\" | awk \"{print \\\$1}\"); do
+            systemctl stop \"\$svc\" 2>/dev/null || true
+        done
+        systemctl stop ceph.target 2>/dev/null || true
+        sleep 2
+
+        # 3. If docker is running, remove ALL ceph containers
+        #    (cephadm will recreate them - state is on disk, not in containers)
+        if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+            # Change restart policy first so docker wont try to restart them
+            docker ps -aq --filter name=ceph 2>/dev/null | xargs -r docker update --restart=no 2>/dev/null || true
+            # Force remove all ceph containers
+            docker ps -aq --filter name=ceph 2>/dev/null | xargs -r docker rm -f 2>/dev/null || true
+        fi
+
+        # 4. Stop docker completely and clean up stale state
+        systemctl stop docker 2>/dev/null || true
+        systemctl stop docker.socket 2>/dev/null || true
+        rm -f /var/run/docker.pid 2>/dev/null || true
+
+        # 5. Unmask docker (in case left from previous failed bootstrap)
+        systemctl unmask docker.service 2>/dev/null || true
+        systemctl unmask docker.socket 2>/dev/null || true
+        systemctl reset-failed docker 2>/dev/null || true
+        systemctl daemon-reload
+
+        # 6. Restore Docker systemd override (from ceph-cluster-setup)
+        mkdir -p /etc/systemd/system/docker.service.d
+        cat > /etc/systemd/system/docker.service.d/override.conf << OVERRIDE
+[Service]
+Type=notify
+NotifyAccess=main
+OVERRIDE
+        systemctl daemon-reload
+
+        # 7. Start docker clean (no ceph containers to restore)
+        systemctl start docker.socket 2>/dev/null || true
+        systemctl start docker
+
+        if systemctl is-active --quiet docker; then
+            echo \"Docker clean-started OK on \$(hostname)\"
+        else
+            echo \"Docker FAILED to start on \$(hostname)\" >&2
+            journalctl -xeu docker.service --no-pager -n 20 >&2
+            exit 1
+        fi
+    '"
+}
+
+# ---------------------------------------------------------------------------
+# restore_ceph_after_bootstrap: Unmask ceph.target, let cephadm recreate containers
+# ---------------------------------------------------------------------------
+restore_ceph_after_bootstrap() {
+    local node=$1
+    log_info "Restoring Ceph on $node..."
+    run_on_node "$node" "sudo bash -c '
+        # Unmask all ceph targets
+        systemctl unmask ceph.target 2>/dev/null || true
+        for tgt in \$(systemctl list-unit-files --type=target --all --no-legend 2>/dev/null | grep \"ceph-\" | awk \"{print \\\$1}\"); do
+            systemctl unmask \"\$tgt\" 2>/dev/null || true
+            systemctl enable \"\$tgt\" 2>/dev/null || true
+        done
+
+        # Re-enable the ceph template service (ceph-<fsid>@.service)
+        for svc in \$(systemctl list-unit-files --type=service --all --no-legend 2>/dev/null | grep \"ceph-\" | awk \"{print \\\$1}\"); do
+            systemctl enable \"\$svc\" 2>/dev/null || true
+        done
+
+        # Start ceph targets - this triggers cephadm to recreate containers
+        systemctl start ceph.target 2>/dev/null || true
+        for tgt in \$(systemctl list-unit-files --type=target --all --no-legend 2>/dev/null | grep \"ceph-\" | awk \"{print \\\$1}\"); do
+            systemctl start \"\$tgt\" 2>/dev/null || true
+        done
+
+        # Also directly ask cephadm to adopt/redeploy if available
+        if command -v cephadm &>/dev/null; then
+            FSID=\$(ls /var/lib/ceph/ 2>/dev/null | head -1)
+            if [ -n \"\$FSID\" ]; then
+                echo \"Triggering cephadm to redeploy daemons (fsid=\$FSID)...\"
+                cephadm ls 2>/dev/null | python3 -c \"
+import sys,json
+for d in json.load(sys.stdin):
+    print(d.get(\\\"name\\\",\\\"\\\"))
+\" 2>/dev/null | while read name; do
+                    [ -z \"\$name\" ] && continue
+                    cephadm adopt --style legacy --name \"\$name\" 2>/dev/null || \
+                    cephadm deploy --fsid \"\$FSID\" --name \"\$name\" 2>/dev/null || true
+                done
+            fi
+        fi
+    '" 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# destroy_kolla: Remove ALL Kolla containers from all nodes (fresh start)
+# This is the nuclear option - removes all OpenStack containers + volumes
+# ---------------------------------------------------------------------------
+destroy_kolla() {
+    log_section "Destroying stale Kolla deployment on all nodes"
+
+    source "$KOLLA_VENV/bin/activate" 2>/dev/null || true
+
+    # Try kolla-ansible destroy first (graceful)
+    if [ -f "$KOLLA_CONFIG/multinode" ]; then
+        log_info "Running kolla-ansible destroy (graceful cleanup)..."
+        cd "$KOLLA_CONFIG"
+        kolla-ansible destroy -i multinode --yes-i-really-really-mean-it 2>/dev/null || true
+    fi
+
+    # Then manually clean up any leftovers on every node
+    log_info "Manually cleaning up containers on all nodes..."
+    for node in "${ALL_NODES[@]}"; do
+        log_info "Cleaning $node..."
+        run_on_node "$node" "sudo bash -c '
+            # Stop and remove all kolla containers
+            docker ps -a --filter \"label=kolla_version\" -q 2>/dev/null | xargs -r docker rm -f 2>/dev/null || true
+            # Also catch containers by name pattern
+            docker ps -a --format \"{{.Names}}\" 2>/dev/null | grep -E \"^(kolla_|nova_|neutron_|cinder_|glance_|keystone_|horizon_|heat_|mariadb|rabbitmq|memcached|haproxy|proxysql|fluentd|cron|kolla|openvswitch|ovn)\" | xargs -r docker rm -f 2>/dev/null || true
+            # Remove kolla volumes
+            docker volume ls -q 2>/dev/null | grep -E \"^(kolla_|mariadb|rabbitmq)\" | xargs -r docker volume rm -f 2>/dev/null || true
+            # Clean up kolla log directories but keep the base
+            rm -rf /var/log/kolla/* 2>/dev/null || true
+            # Clean up libvirt directories kolla creates
+            rm -rf /var/lib/docker/volumes/kolla_* 2>/dev/null || true
+        '" 2>/dev/null || true
+    done
+
+    log_success "Stale deployment destroyed on all nodes"
 }
 
 # Fix config file formatting (remove leading tabs/spaces that break INI parsing)
@@ -124,6 +451,9 @@ fix_config_formatting() {
 install_kolla_ansible() {
     log_section "Phase 1: Installing Kolla-Ansible on Deployment Host"
 
+    # Clean SSH known_hosts first (in case VMs were destroyed and recreated)
+    clean_ssh_known_hosts
+
     log_info "Installing system dependencies..."
     sudo apt update
     sudo apt install -y python3-dev libffi-dev gcc libssl-dev python3-venv git
@@ -132,6 +462,7 @@ install_kolla_ansible() {
     if [ ! -d "$KOLLA_VENV" ]; then
         python3 -m venv "$KOLLA_VENV"
     fi
+    
 
     log_info "Activating virtual environment and installing packages..."
     source "$KOLLA_VENV/bin/activate"
@@ -164,6 +495,10 @@ install_kolla_ansible() {
 create_ceph_users() {
     log_section "Phase 2: Creating Ceph Pools and Users for OpenStack"
 
+    # Ceph must be running for this phase
+    ensure_all_healthy
+
+    run_on_node_sudo $CEPH_ADMIN_IP "cephadm shell -- ceph config set global mon_max_pg_per_osd 500 || true"
     log_info "Creating Ceph pools on ${CEPH_ADMIN_NODE}..."
 
     # Create pools for OpenStack services
@@ -261,20 +596,32 @@ setup_kolla_configs() {
     mkdir -p "$KOLLA_CONFIG/config/cinder/cinder-backup"
     mkdir -p "$KOLLA_CONFIG/config/nova"
 
+    # Helper to safely copy if source exists
+    safe_copy() {
+        src=$1
+        dest=$2
+        if [ -f "$src" ]; then
+            log_info "Copying $src to $dest..."
+            cp "$src" "$dest"
+        else
+            log_warning "Source $src missing. Assuming it's already in place."
+        fi
+    }
+
     # Copy ceph.conf to all service directories
     log_info "Copying ceph.conf to service directories..."
-    cp /tmp/ceph.conf "$KOLLA_CONFIG/config/glance/"
-    cp /tmp/ceph.conf "$KOLLA_CONFIG/config/cinder/"
-    cp /tmp/ceph.conf "$KOLLA_CONFIG/config/nova/"
+    safe_copy /tmp/ceph.conf "$KOLLA_CONFIG/config/glance/"
+    safe_copy /tmp/ceph.conf "$KOLLA_CONFIG/config/cinder/"
+    safe_copy /tmp/ceph.conf "$KOLLA_CONFIG/config/nova/"
 
     # Copy keyrings to appropriate directories
     log_info "Copying keyrings to service directories..."
-    cp /tmp/ceph.client.glance.keyring "$KOLLA_CONFIG/config/glance/"
-    cp /tmp/ceph.client.cinder.keyring "$KOLLA_CONFIG/config/cinder/cinder-volume/"
-    cp /tmp/ceph.client.cinder-backup.keyring "$KOLLA_CONFIG/config/cinder/cinder-backup/"
-    cp /tmp/ceph.client.cinder.keyring "$KOLLA_CONFIG/config/cinder/cinder-backup/"  # For reading volumes
-    cp /tmp/ceph.client.nova.keyring "$KOLLA_CONFIG/config/nova/"
-    cp /tmp/ceph.client.cinder.keyring "$KOLLA_CONFIG/config/nova/"  # For live migration
+    safe_copy /tmp/ceph.client.glance.keyring "$KOLLA_CONFIG/config/glance/"
+    safe_copy /tmp/ceph.client.cinder.keyring "$KOLLA_CONFIG/config/cinder/cinder-volume/"
+    safe_copy /tmp/ceph.client.cinder-backup.keyring "$KOLLA_CONFIG/config/cinder/cinder-backup/"
+    safe_copy /tmp/ceph.client.cinder.keyring "$KOLLA_CONFIG/config/cinder/cinder-backup/"
+    safe_copy /tmp/ceph.client.nova.keyring "$KOLLA_CONFIG/config/nova/"
+    safe_copy /tmp/ceph.client.cinder.keyring "$KOLLA_CONFIG/config/nova/"
 
     # Fix formatting of all Ceph config files (remove tabs/spaces that break INI parsing)
     log_info "Fixing formatting of all Ceph config files..."
@@ -284,20 +631,20 @@ setup_kolla_configs() {
 
     # Create globals.yml
     log_info "Creating globals.yml..."
-    cat > "$KOLLA_CONFIG/globals.yml" << 'EOF'
+    cat > "$KOLLA_CONFIG/globals.yml" << EOF
 ---
 # ========================
 # 1. Base Setup
 # ========================
 kolla_base_distro: "ubuntu"
 kolla_install_type: "source"
-openstack_release: "2024.1"
+openstack_release: "2024.2"
 
 # ========================
 # 2. Networking (Underlay)
 # ========================
 # VIP on Controller Loopbacks (Anycast)
-kolla_internal_vip_address: "10.100.0.254"
+kolla_internal_vip_address: "${VIP}"
 enable_keepalived: "no"
 
 # Bind services to Host Loopbacks
@@ -354,6 +701,9 @@ ceph_cinder_keyring: "client.cinder.keyring"
 ceph_cinder_user: "cinder"
 ceph_cinder_pool_name: "volumes"
 
+# Cinder HA - required when multiple cinder-volume instances
+cinder_cluster_name: "ceph-cinder"
+
 # Cinder Backup to Ceph
 cinder_backup_driver: "ceph"
 ceph_cinder_backup_keyring: "client.cinder-backup.keyring"
@@ -369,10 +719,11 @@ EOF
 
     # Create multinode inventory
     log_info "Creating multinode inventory..."
-    cat > "$KOLLA_CONFIG/multinode" << 'EOF'
+    cat > "$KOLLA_CONFIG/multinode" << EOF
 # OpenStack Multinode Inventory
 # Control Plane: hypervisor-1,2,3
 # Compute/Storage: hypervisor-4,5
+# Subnet: 192.168.10.0/24
 
 [control]
 control01 ansible_host=192.168.10.11 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.1 tunnel_ip=10.1.0.1
@@ -391,6 +742,11 @@ compute02 ansible_host=192.168.10.15 ansible_user=ubuntu ansible_become=true api
 [monitoring]
 control01
 
+# When compute nodes and control nodes use different interfaces,
+# you need to comment out "api_interface" and other interfaces from the globals.yml
+# and specify like below:
+#compute01 neutron_external_interface=eth0 api_interface=em1 tunnel_interface=em1
+
 [storage]
 compute01
 compute02
@@ -408,13 +764,46 @@ monitoring
 [tls-backend:children]
 control
 
-# Service Groups
+# You can explicitly specify which hosts run each project by updating the
+# groups in the sections below. Common services are grouped together.
+
 [common:children]
 control
 network
 compute
 storage
 monitoring
+
+[collectd:children]
+compute
+
+[grafana:children]
+monitoring
+
+[etcd:children]
+control
+
+[influxdb:children]
+monitoring
+
+[prometheus:children]
+monitoring
+
+[telegraf:children]
+compute
+control
+monitoring
+network
+storage
+
+[hacluster:children]
+control
+
+[hacluster-remote:children]
+compute
+
+[loadbalancer:children]
+network
 
 [mariadb:children]
 control
@@ -437,8 +826,12 @@ network
 [openvswitch:children]
 network
 compute
+manila-share
 
 [cinder:children]
+control
+
+[cloudkitty:children]
 control
 
 [memcached:children]
@@ -447,14 +840,476 @@ control
 [horizon:children]
 control
 
+[swift:children]
+control
+
+[barbican:children]
+control
+
 [heat:children]
+control
+
+[ironic:children]
+control
+
+[magnum:children]
+control
+
+[mistral:children]
+control
+
+[manila:children]
+control
+
+[ceilometer:children]
+control
+
+[aodh:children]
+control
+
+[cyborg:children]
+control
+compute
+
+[gnocchi:children]
+control
+
+[tacker:children]
+control
+
+[trove:children]
+control
+
+[watcher:children]
+control
+
+[octavia:children]
+control
+
+[designate:children]
 control
 
 [placement:children]
 control
 
-[loadbalancer:children]
+[bifrost:children]
+deployment
+
+[zun:children]
+control
+
+[skyline:children]
+control
+
+[redis:children]
+control
+
+[blazar:children]
+control
+
+[venus:children]
+monitoring
+
+[letsencrypt:children]
+loadbalancer
+
+# Additional control implemented here. These groups allow you to control which
+# services run on which hosts at a per-service level.
+#
+# Word of caution: Some services are required to run on the same host to
+# function appropriately. For example, neutron-metadata-agent must run on the
+# same host as the l3-agent and (depending on configuration) the dhcp-agent.
+
+# Common
+[cron:children]
+common
+
+[fluentd:children]
+common
+
+[kolla-logs:children]
+common
+
+[kolla-toolbox:children]
+common
+
+[opensearch:children]
+control
+
+# Opensearch dashboards
+[opensearch-dashboards:children]
+opensearch
+
+# Glance
+[glance-api:children]
+glance
+
+# Nova
+[nova-api:children]
+nova
+
+[nova-conductor:children]
+nova
+
+[nova-super-conductor:children]
+nova
+
+[nova-novncproxy:children]
+nova
+
+[nova-scheduler:children]
+nova
+
+[nova-spicehtml5proxy:children]
+nova
+
+[nova-compute-ironic:children]
+nova
+
+[nova-serialproxy:children]
+nova
+
+# Neutron
+[neutron-server:children]
+control
+
+[neutron-dhcp-agent:children]
+neutron
+
+[neutron-l3-agent:children]
+neutron
+
+[neutron-metadata-agent:children]
+neutron
+
+[neutron-ovn-metadata-agent:children]
+compute
 network
+
+[neutron-bgp-dragent:children]
+neutron
+
+[neutron-infoblox-ipam-agent:children]
+neutron
+
+[neutron-metering-agent:children]
+neutron
+
+[ironic-neutron-agent:children]
+neutron
+
+[neutron-ovn-agent:children]
+compute
+network
+
+# Cinder
+[cinder-api:children]
+cinder
+
+[cinder-backup:children]
+storage
+
+[cinder-scheduler:children]
+cinder
+
+[cinder-volume:children]
+storage
+
+# Cloudkitty
+[cloudkitty-api:children]
+cloudkitty
+
+[cloudkitty-processor:children]
+cloudkitty
+
+# iSCSI
+[iscsid:children]
+compute
+storage
+ironic
+
+[tgtd:children]
+storage
+
+# Manila
+[manila-api:children]
+manila
+
+[manila-scheduler:children]
+manila
+
+[manila-share:children]
+network
+
+[manila-data:children]
+manila
+
+# Swift
+[swift-proxy-server:children]
+swift
+
+[swift-account-server:children]
+storage
+
+[swift-container-server:children]
+storage
+
+[swift-object-server:children]
+storage
+
+# Barbican
+[barbican-api:children]
+barbican
+
+[barbican-keystone-listener:children]
+barbican
+
+[barbican-worker:children]
+barbican
+
+# Heat
+[heat-api:children]
+heat
+
+[heat-api-cfn:children]
+heat
+
+[heat-engine:children]
+heat
+
+# Ironic
+[ironic-api:children]
+ironic
+
+[ironic-conductor:children]
+ironic
+
+[ironic-inspector:children]
+ironic
+
+[ironic-tftp:children]
+ironic
+
+[ironic-http:children]
+ironic
+
+# Magnum
+[magnum-api:children]
+magnum
+
+[magnum-conductor:children]
+magnum
+
+# Mistral
+[mistral-api:children]
+mistral
+
+[mistral-executor:children]
+mistral
+
+[mistral-engine:children]
+mistral
+
+[mistral-event-engine:children]
+mistral
+
+# Ceilometer
+[ceilometer-central:children]
+ceilometer
+
+[ceilometer-notification:children]
+ceilometer
+
+[ceilometer-compute:children]
+compute
+
+[ceilometer-ipmi:children]
+compute
+
+# Aodh
+[aodh-api:children]
+aodh
+
+[aodh-evaluator:children]
+aodh
+
+[aodh-listener:children]
+aodh
+
+[aodh-notifier:children]
+aodh
+
+# Cyborg
+[cyborg-api:children]
+cyborg
+
+[cyborg-agent:children]
+compute
+
+[cyborg-conductor:children]
+cyborg
+
+# Gnocchi
+[gnocchi-api:children]
+gnocchi
+
+[gnocchi-statsd:children]
+gnocchi
+
+[gnocchi-metricd:children]
+gnocchi
+
+# Trove
+[trove-api:children]
+trove
+
+[trove-conductor:children]
+trove
+
+[trove-taskmanager:children]
+trove
+
+# Multipathd
+[multipathd:children]
+compute
+storage
+
+# Watcher
+[watcher-api:children]
+watcher
+
+[watcher-engine:children]
+watcher
+
+[watcher-applier:children]
+watcher
+
+# Octavia
+[octavia-api:children]
+octavia
+
+[octavia-driver-agent:children]
+octavia
+
+[octavia-health-manager:children]
+octavia
+
+[octavia-housekeeping:children]
+octavia
+
+[octavia-worker:children]
+octavia
+
+# Designate
+[designate-api:children]
+designate
+
+[designate-central:children]
+designate
+
+[designate-producer:children]
+designate
+
+[designate-mdns:children]
+network
+
+[designate-worker:children]
+designate
+
+[designate-sink:children]
+designate
+
+[designate-backend-bind9:children]
+designate
+
+# Placement
+[placement-api:children]
+placement
+
+# Zun
+[zun-api:children]
+zun
+
+[zun-wsproxy:children]
+zun
+
+[zun-compute:children]
+compute
+
+[zun-cni-daemon:children]
+compute
+
+# Skyline
+[skyline-apiserver:children]
+skyline
+
+[skyline-console:children]
+skyline
+
+# Tacker
+[tacker-server:children]
+tacker
+
+[tacker-conductor:children]
+tacker
+
+# Blazar
+[blazar-api:children]
+blazar
+
+[blazar-manager:children]
+blazar
+
+# Prometheus
+[prometheus-node-exporter:children]
+monitoring
+control
+compute
+network
+storage
+
+[prometheus-mysqld-exporter:children]
+mariadb
+
+[prometheus-memcached-exporter:children]
+memcached
+
+[prometheus-cadvisor:children]
+monitoring
+control
+compute
+network
+storage
+
+[prometheus-alertmanager:children]
+monitoring
+
+[prometheus-openstack-exporter:children]
+monitoring
+
+[prometheus-elasticsearch-exporter:children]
+opensearch
+
+[prometheus-blackbox-exporter:children]
+monitoring
+
+[prometheus-libvirt-exporter:children]
+compute
+
+[prometheus-msteams:children]
+prometheus-alertmanager
+
+[masakari-api:children]
+control
+
+[masakari-engine:children]
+control
+
+[masakari-hostmonitor:children]
+control
+
+[masakari-instancemonitor:children]
+compute
 
 [ovn-controller:children]
 ovn-controller-compute
@@ -478,15 +1333,21 @@ ovn-database
 [ovn-sb-db:children]
 ovn-database
 
+[venus-api:children]
+venus
+
+[venus-manager:children]
+venus
+
+[letsencrypt-webserver:children]
+letsencrypt
+
+[letsencrypt-lego:children]
+letsencrypt
+
 [ovn-bgp-agent:children]
 control
 compute
-
-[cinder-volume:children]
-storage
-
-[cinder-backup:children]
-storage
 EOF
 
     log_success "Kolla configuration files created!"
@@ -528,10 +1389,22 @@ setup_vip() {
 
 install_ceph_client() {
     log_section "Phase 5: Installing Ceph Client on All Nodes"
+    log_info "Waiting for apt locks..."
+    for host in "${ALL_NODES[@]}"; do
+        echo -n "Checking APT locks on $host... "
+
+        if wait_for_apt_lock "$host"; then
+            echo "ready"
+        else
+            echo "FAILED (lock held too long)"
+            exit 1
+        fi
+    done
+
 
     for node in "${ALL_NODES[@]}"; do
         log_info "Installing ceph-common on $node..."
-        run_on_node_sudo $node "apt update && apt install -y ceph-common python3-rbd"
+        run_on_node "$node" "sudo bash -c 'apt update && apt install -y ceph-common python3-rbd'"
     done
 
     log_success "Ceph client installed on all nodes!"
@@ -544,15 +1417,104 @@ install_ceph_client() {
 run_bootstrap() {
     log_section "Phase 6: Running Kolla-Ansible Bootstrap"
 
+    # ---------------------------------------------------------------
+    # Step 0: Check if Ceph cluster is actually installed and running
+    # ---------------------------------------------------------------
+    local ceph_exists=false
+    log_info "Checking if Ceph cluster is installed..."
+    # Check if Docker exists AND has Ceph containers (not just /var/lib/ceph directory)
+    if run_on_node "${CONTROLLERS[0]}" "command -v docker >/dev/null 2>&1 && docker ps -a --filter name=ceph 2>/dev/null | grep -q ceph" 2>/dev/null; then
+        log_info "Ceph cluster detected (has running/stopped containers) - will manage during bootstrap"
+        ceph_exists=true
+    else
+        log_info "No Ceph cluster detected (fresh nodes or no containers) - bootstrap will only handle Docker"
+        ceph_exists=false
+    fi
+
+    # ---------------------------------------------------------------
+    # Step 1: NUKE ceph containers if Ceph exists
+    # ---------------------------------------------------------------
+    if [ "$ceph_exists" = true ]; then
+        log_info "Removing ceph containers and cleaning docker on all nodes..."
+        for node in "${ALL_NODES[@]}"; do
+            nuke_ceph_containers "$node"
+        done
+        sleep 3
+    fi
+
+    # ---------------------------------------------------------------
+    # Step 2: Run bootstrap with retry
+    # ---------------------------------------------------------------
     source "$KOLLA_VENV/bin/activate"
     cd "$KOLLA_CONFIG"
 
-    log_warning "This will install Docker and configure nodes. Existing Ceph containers may restart."
-    log_info "Running bootstrap-servers..."
+    local bootstrap_success=false
+    local max_retries=2
 
-    kolla-ansible -i multinode bootstrap-servers
+    for retry in $(seq 0 $max_retries); do
+        log_info "Running bootstrap-servers (attempt $((retry + 1))/$((max_retries + 1)))..."
 
-    log_success "Bootstrap complete!"
+        if kolla-ansible bootstrap-servers -i multinode; then
+            bootstrap_success=true
+            log_success "Bootstrap completed successfully!"
+            break
+        fi
+
+        log_warning "Bootstrap attempt $((retry + 1)) failed"
+
+        if [ $retry -lt $max_retries ]; then
+            log_info "Recovering nodes before retry..."
+            if [ "$ceph_exists" = true ]; then
+                for node in "${ALL_NODES[@]}"; do
+                    nuke_ceph_containers "$node"
+                done
+            fi
+            sleep 10
+        fi
+    done
+
+    if [ "$bootstrap_success" = false ]; then
+        log_error "Bootstrap failed after $((max_retries + 1)) attempts"
+        log_error "Check logs: ssh ubuntu@${CONTROLLERS[0]} 'sudo journalctl -xeu docker --no-pager -n 50'"
+        exit 1
+    fi
+
+    # ---------------------------------------------------------------
+    # Step 3: Restore Ceph if it existed before bootstrap
+    # ---------------------------------------------------------------
+    if [ "$ceph_exists" = true ]; then
+        log_info "Restoring Ceph on all nodes (cephadm will recreate containers)..."
+        for node in "${ALL_NODES[@]}"; do
+            restore_ceph_after_bootstrap "$node"
+        done
+
+        # Wait for Ceph quorum (cephadm needs to recreate containers)
+        log_info "Waiting for Ceph cluster to form quorum (this may take a minute)..."
+        sleep 30
+
+        # Verify Ceph
+        log_info "Verifying Ceph cluster health..."
+        local ceph_ok=false
+        for attempt in 1 2 3 4 5; do
+            if run_on_node_sudo "$CEPH_ADMIN_IP" "cephadm shell -- ceph -s" 2>/dev/null; then
+                ceph_ok=true
+                break
+            fi
+            log_warning "Ceph not ready yet (attempt $attempt/5), waiting 15s..."
+            sleep 15
+        done
+
+        if [ "$ceph_ok" = false ]; then
+            log_error "Ceph cluster failed to recover after bootstrap"
+            log_error "Check: ssh ubuntu@${CEPH_ADMIN_IP} 'sudo cephadm shell -- ceph -s'"
+            exit 1
+        fi
+
+        log_success "Bootstrap complete - Docker and Ceph both healthy!"
+    else
+        log_success "Bootstrap complete - Docker is healthy!"
+        log_info "Next step: Install Ceph cluster before continuing OpenStack deployment"
+    fi
 }
 
 # =============================================================================
@@ -562,11 +1524,13 @@ run_bootstrap() {
 run_prechecks() {
     log_section "Phase 7: Running Kolla-Ansible Prechecks"
 
+    ensure_all_healthy
+
     source "$KOLLA_VENV/bin/activate"
     cd "$KOLLA_CONFIG"
 
     log_info "Running prechecks..."
-    kolla-ansible -i multinode prechecks
+    kolla-ansible prechecks -i multinode
 
     log_success "Prechecks passed!"
 }
@@ -578,13 +1542,46 @@ run_prechecks() {
 run_deploy() {
     log_section "Phase 8: Running Kolla-Ansible Deploy"
 
+    ensure_all_healthy
+
     source "$KOLLA_VENV/bin/activate"
     cd "$KOLLA_CONFIG"
 
-    log_info "Starting OpenStack deployment (this takes 30-60 minutes)..."
-    kolla-ansible -i multinode deploy
+    local max_attempts=3
+    for attempt in $(seq 1 $max_attempts); do
+        log_info "Starting OpenStack deployment (attempt $attempt/$max_attempts)..."
 
-    log_success "Deployment complete!"
+        if kolla-ansible deploy -i multinode; then
+            log_success "Deployment complete!"
+            return 0
+        fi
+
+        log_warning "Deploy attempt $attempt failed - checking if MariaDB recovery is needed..."
+
+        # Check if MariaDB cluster is broken (common after interrupted deploys)
+        local mariadb_broken=false
+        for ctrl in "${CONTROLLERS[@]}"; do
+            if run_on_node "$ctrl" "sudo docker ps -a --format '{{.Names}} {{.Status}}' 2>/dev/null | grep mariadb | grep -qi 'exited\|dead'" 2>/dev/null; then
+                mariadb_broken=true
+                break
+            fi
+        done
+
+        if [ "$mariadb_broken" = true ] && [ $attempt -lt $max_attempts ]; then
+            log_info "MariaDB cluster appears broken - running mariadb-recovery..."
+            kolla-ansible mariadb-recovery -i multinode 2>&1 || true
+            sleep 10
+            ensure_all_healthy
+            log_info "MariaDB recovery done, retrying deploy..."
+        elif [ $attempt -lt $max_attempts ]; then
+            log_info "Waiting before retry..."
+            ensure_all_healthy
+            sleep 15
+        fi
+    done
+
+    log_error "Deploy failed after $max_attempts attempts"
+    exit 1
 }
 
 # =============================================================================
@@ -598,7 +1595,7 @@ run_post_deploy() {
     cd "$KOLLA_CONFIG"
 
     log_info "Running post-deploy..."
-    kolla-ansible -i multinode post-deploy
+    kolla-ansible post-deploy -i multinode
 
     log_success "Post-deploy complete!"
 }
@@ -648,16 +1645,14 @@ main() {
     echo -e "${GREEN}OpenStack Deployment with Kolla-Ansible and Ceph${NC}"
     echo "============================================================================="
     echo ""
-    echo "This script will deploy OpenStack with the following configuration:"
-    echo "  - Controllers: hypervisor-1, hypervisor-2, hypervisor-3"
-    echo "  - Compute: hypervisor-4, hypervisor-5"
-    echo "  - VIP: ${VIP}"
-    echo "  - Storage Backend: Ceph"
+    echo "Configuration:"
+    echo "  - Controllers: ${CONTROLLERS[*]}"
+    echo "  - Compute:     ${COMPUTES[*]}"
+    echo "  - VIP:         ${VIP}"
+    echo "  - Kolla dir:   ${KOLLA_CONFIG}"
     echo ""
-    echo "Press ENTER to continue or CTRL+C to abort..."
-    read
 
-    # Run all phases
+    # Run all phases (each is idempotent / safe to re-run)
     install_kolla_ansible
     create_ceph_users
     setup_kolla_configs
@@ -695,6 +1690,17 @@ case "${1:-}" in
         ;;
     deploy)
         run_deploy
+        ;;
+    destroy)
+        destroy_kolla
+        ;;
+    fresh)
+        destroy_kolla
+        run_bootstrap
+        run_prechecks
+        run_deploy
+        run_post_deploy
+        verify_deployment
         ;;
     post-deploy)
         run_post_deploy

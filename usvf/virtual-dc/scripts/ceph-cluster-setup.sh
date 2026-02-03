@@ -17,14 +17,56 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Configuration
-BOOTSTRAP_HOST="hypervisor-1"
+# Subnet base (REQUIRED - use --subnet=192.168.10 or --subnet=192.168.11)
+SUBNET_BASE=""
+
+# Parse command line arguments
+for arg in "$@"; do
+    case $arg in
+        --subnet=*)
+            SUBNET_BASE="${arg#*=}"
+            SUBNET_BASE="${SUBNET_BASE%.0/24}"
+            SUBNET_BASE="${SUBNET_BASE%.0}"
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 --subnet=<subnet_base>"
+            echo "  Example: $0 --subnet=192.168.10   # for dc1"
+            echo "  Example: $0 --subnet=192.168.11   # for dc2"
+            exit 0
+            ;;
+    esac
+done
+
+# # Validate subnet is provided
+# if [ -z "$SUBNET_BASE" ]; then
+#     echo "ERROR: --subnet is required"
+#     echo "Usage: $0 --subnet=192.168.10   # for dc1"
+#     echo "       $0 --subnet=192.168.11   # for dc2"
+#     exit 1
+# fi
+
+# Configuration (derived from subnet)
+# Note: We use IPs for SSH to support multiple datacenters (dc1=.10, dc2=.11, etc.)
+BOOTSTRAP_HOST="192.168.10.11"
 BOOTSTRAP_IP="192.168.10.11"
-CONTROL_HOSTS=("hypervisor-1" "hypervisor-2" "hypervisor-3")
+CONTROL_HOSTS=("192.168.10.11" "192.168.10.12" "192.168.10.13")
 CONTROL_IPS=("192.168.10.11" "192.168.10.12" "192.168.10.13")
-OSD_HOSTS=("hypervisor-4" "hypervisor-5")
+OSD_HOSTS=("192.168.10.14" "192.168.10.15")
 OSD_IPS=("192.168.10.14" "192.168.10.15")
-ALL_HOSTS=("hypervisor-1" "hypervisor-2" "hypervisor-3" "hypervisor-4" "hypervisor-5")
+ALL_HOSTS=("192.168.10.11" "192.168.10.12" "192.168.10.13" "192.168.10.14" "192.168.10.15")
+
+# Hostnames for Ceph (used in ceph orch host add)
+CONTROL_NAMES=("hypervisor-1" "hypervisor-2" "hypervisor-3")
+OSD_NAMES=("hypervisor-4" "hypervisor-5")
+ALL_NAMES=("hypervisor-1" "hypervisor-2" "hypervisor-3" "hypervisor-4" "hypervisor-5")
+
+# SSH configuration
+SSH_USER="ubuntu"
+# Map subnet to DC name: 192.168.10 -> dc1, 192.168.11 -> dc2, etc.
+SUBNET_OCTET="${SUBNET_BASE##*.}"  # Extract last octet (10, 11, etc.)
+SSH_KEY="/root/usvf/usvf/virtual-dc/config/vdc-dc1/ssh-keys/id_rsa"
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ${SSH_KEY}"
 
 # RBD and RGW Configuration
 RBD_POOL="rbd_data"
@@ -47,12 +89,13 @@ log_error() {
 run_on_host() {
     local host=$1
     shift
-    ssh "$host" "$@"
+    # Use IP address for SSH with proper user and key
+    ssh ${SSH_OPTS} ${SSH_USER}@${host} "$@"
 }
 
 run_ceph_cmd() {
     # Run ceph command via cephadm shell on bootstrap host
-    ssh "$BOOTSTRAP_HOST" "sudo cephadm shell -- $*"
+    ssh ${SSH_OPTS} ${SSH_USER}@${BOOTSTRAP_HOST} "sudo cephadm shell -- $*"
 }
 
 wait_for_health() {
@@ -114,24 +157,42 @@ phase0_fix_ssh_keys() {
         exit 1
     fi
 
-    # Wait for VMs to stabilize (unattended-upgrades may be running)
-    log_info "Waiting for VMs to stabilize..."
-    sleep 30
+    # Wait for SSH to be fully ready (cloud-init must finish setting up authorized_keys)
+    # This is more reliable than a fixed sleep - we actually test SSH connectivity
+    log_info "Waiting for SSH to be fully ready on all hosts (cloud-init must complete)..."
+    local ssh_max_wait=300  # 5 minutes max
+    local ssh_interval=10
 
-    # Scan and add new host keys
-    log_info "Scanning and adding new SSH host keys..."
-    for ip in "${CONTROL_IPS[@]}" "${OSD_IPS[@]}"; do
-        ssh-keyscan -H "$ip" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
-    done
-
-    # Verify SSH connectivity to all hosts
-    log_info "Verifying SSH connectivity..."
     for host in "${ALL_HOSTS[@]}"; do
-        if ! ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" "hostname" > /dev/null 2>&1; then
-            log_error "Cannot SSH to $host. Please check connectivity."
+        local ssh_elapsed=0
+        local ssh_ready=false
+
+        echo -n "  Waiting for $host"
+        while [ $ssh_elapsed -lt $ssh_max_wait ]; do
+            # Use timeout command to prevent hanging
+            if timeout 10 ssh ${SSH_OPTS} -o ConnectTimeout=5 -o BatchMode=yes ${SSH_USER}@"$host" "hostname" > /dev/null 2>&1; then
+                ssh_ready=true
+                break
+            fi
+            echo -n "."
+            sleep $ssh_interval
+            ssh_elapsed=$((ssh_elapsed + ssh_interval))
+        done
+
+        if $ssh_ready; then
+            echo " OK"
+        else
+            echo " FAILED"
+            log_error "Cannot SSH to $host after ${ssh_max_wait}s. Cloud-init may not have completed."
+            log_error "Check: ssh -i ${SSH_KEY} ${SSH_USER}@${host}"
             exit 1
         fi
-        log_info "  $host: OK"
+    done
+
+    # Scan and add new host keys (for other tools that use known_hosts)
+    log_info "Scanning and adding SSH host keys to known_hosts..."
+    for ip in "${CONTROL_IPS[@]}" "${OSD_IPS[@]}"; do
+        ssh-keyscan -H "$ip" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
     done
 
     log_info "Phase 0 complete: All hosts ready"
@@ -140,15 +201,28 @@ phase0_fix_ssh_keys() {
 # ============================================================================
 # PHASE 1: Prerequisites on all hosts
 # ============================================================================
-wait_for_apt() {
+stop_unattended_upgrades() {
     local host=$1
-    local max_wait=120
+    # Stop unattended-upgrades and apt services, release locks
+    ssh ${SSH_OPTS} ${SSH_USER}@"$host" "
+        sudo systemctl stop apt-daily.timer apt-daily-upgrade.timer 2>/dev/null
+        sudo systemctl stop apt-daily.service apt-daily-upgrade.service unattended-upgrades.service 2>/dev/null
+        sudo systemctl disable apt-daily.timer apt-daily-upgrade.timer 2>/dev/null
+        sudo pkill -9 -f unattended-upgrade 2>/dev/null
+        sudo pkill -9 -f apt 2>/dev/null
+        sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null
+        sudo dpkg --configure -a 2>/dev/null
+    " 2>/dev/null || true
+}
+
+wait_for_apt_lock() {
+    local host=$1
+    local max_wait=60  # 1 minute max after stopping services
     local elapsed=0
     while [ $elapsed -lt $max_wait ]; do
-        if ssh "$host" "! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1" 2>/dev/null; then
+        if ssh ${SSH_OPTS} ${SSH_USER}@"$host" "! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1" 2>/dev/null; then
             return 0
         fi
-        echo -n "."
         sleep 5
         elapsed=$((elapsed + 5))
     done
@@ -158,13 +232,69 @@ wait_for_apt() {
 phase1_prerequisites() {
     log_info "=== PHASE 1: Installing prerequisites on all hosts ==="
 
-    # First, wait for apt to be free on all hosts (unattended-upgrades may be running)
-    log_info "Waiting for apt locks to be released on all hosts..."
+    # Stop unattended-upgrades on all hosts immediately (don't wait for it)
+    log_info "Stopping unattended-upgrades on all hosts..."
     for host in "${ALL_HOSTS[@]}"; do
-        log_info "  Waiting for apt on $host..."
-        if ! wait_for_apt "$host"; then
-            log_warn "Apt lock timeout on $host, trying to kill blocking processes..."
-            ssh "$host" "sudo killall -9 apt-get apt dpkg 2>/dev/null; sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock 2>/dev/null" || true
+        echo -n "  Stopping apt services on $host..."
+        stop_unattended_upgrades "$host"
+        echo " done"
+    done
+
+    # Check if any VMs need a reboot and reboot them now (to prevent reboots during install)
+    log_info "Checking for pending reboots..."
+    local needs_reboot=false
+    for host in "${ALL_HOSTS[@]}"; do
+        if ssh ${SSH_OPTS} ${SSH_USER}@"$host" "test -f /var/run/reboot-required" 2>/dev/null; then
+            log_warn "  $host needs reboot - initiating..."
+            ssh ${SSH_OPTS} ${SSH_USER}@"$host" "sudo reboot" 2>/dev/null || true
+            needs_reboot=true
+        else
+            log_info "  $host: no reboot needed"
+        fi
+    done
+
+    # If any VMs were rebooted, wait for them to come back up
+    if $needs_reboot; then
+        log_info "Waiting for rebooted VMs to come back online..."
+        sleep 30  # Initial wait for shutdown
+
+        for host in "${ALL_HOSTS[@]}"; do
+            echo -n "  Waiting for $host"
+            local wait_elapsed=0
+            local max_wait=180  # 3 minutes max
+            while [ $wait_elapsed -lt $max_wait ]; do
+                if timeout 5 ssh ${SSH_OPTS} -o ConnectTimeout=3 ${SSH_USER}@"$host" "hostname" >/dev/null 2>&1; then
+                    echo " UP"
+                    break
+                fi
+                echo -n "."
+                sleep 10
+                wait_elapsed=$((wait_elapsed + 10))
+            done
+            if [ $wait_elapsed -ge $max_wait ]; then
+                echo " TIMEOUT"
+                log_error "VM $host did not come back up after reboot"
+                exit 1
+            fi
+        done
+
+        # Stop unattended-upgrades again after reboot
+        log_info "Stopping apt services after reboot..."
+        for host in "${ALL_HOSTS[@]}"; do
+            stop_unattended_upgrades "$host"
+        done
+        sleep 5
+    fi
+
+    # Now wait for apt locks to be released (should be quick after killing processes)
+    log_info "Waiting for apt locks..."
+    for host in "${ALL_HOSTS[@]}"; do
+        echo -n "  Checking $host..."
+        if wait_for_apt_lock "$host"; then
+            echo " ready"
+        else
+            echo " retrying..."
+            stop_unattended_upgrades "$host"
             sleep 2
         fi
     done
@@ -172,27 +302,57 @@ phase1_prerequisites() {
     for host in "${ALL_HOSTS[@]}"; do
         log_info "Installing docker.io and ceph-common on $host..."
         # First fix any dpkg interruption issues
-        ssh "$host" "sudo dpkg --configure -a 2>/dev/null" || true
+        ssh ${SSH_OPTS} ${SSH_USER}@"$host" "sudo dpkg --configure -a 2>/dev/null" || true
 
         # Retry logic for installation
         local max_retries=3
         local retry=0
         local success=false
         while [ $retry -lt $max_retries ]; do
-            if ssh "$host" "sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker.io ceph-common" 2>/dev/null; then
+            if ssh ${SSH_OPTS} ${SSH_USER}@"$host" "sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker.io ceph-common" 2>/dev/null; then
                 success=true
                 break
             fi
             retry=$((retry + 1))
             log_warn "Retry $retry/$max_retries for $host..."
             # Fix dpkg again before retry
-            ssh "$host" "sudo dpkg --configure -a 2>/dev/null" || true
+            ssh ${SSH_OPTS} ${SSH_USER}@"$host" "sudo dpkg --configure -a 2>/dev/null" || true
             sleep 10
         done
 
         # Verify docker is actually installed
-        if ! ssh "$host" "which docker > /dev/null 2>&1"; then
+        if ! ssh ${SSH_OPTS} ${SSH_USER}@"$host" "which docker > /dev/null 2>&1"; then
             log_error "Docker installation failed on $host!"
+            exit 1
+        fi
+        
+        # Fix Docker systemd configuration to prevent "activating" state issue
+        log_info "Configuring Docker systemd unit on $host..."
+        ssh ${SSH_OPTS} ${SSH_USER}@"$host" "
+            sudo mkdir -p /etc/systemd/system/docker.service.d
+            sudo bash -c 'cat > /etc/systemd/system/docker.service.d/override.conf << EOF
+[Service]
+Type=notify
+NotifyAccess=main
+EOF'
+            sudo systemctl daemon-reload
+            sudo systemctl restart docker
+            sudo systemctl enable docker
+        "
+        
+        # Verify Docker is active (not just activating)
+        local wait_count=0
+        while [ $wait_count -lt 12 ]; do
+            if ssh ${SSH_OPTS} ${SSH_USER}@"$host" "systemctl is-active docker | grep -q '^active\$'" 2>/dev/null; then
+                log_info "Docker is active on $host"
+                break
+            fi
+            wait_count=$((wait_count + 1))
+            sleep 5
+        done
+        
+        if [ $wait_count -ge 12 ]; then
+            log_error "Docker failed to become active on $host"
             exit 1
         fi
     done
@@ -267,35 +427,25 @@ phase3_distribute_keys() {
 phase4_add_hosts() {
     log_info "=== PHASE 4: Adding hosts to Ceph cluster ==="
 
-    # Add all hosts
-    for i in "${!ALL_HOSTS[@]}"; do
-        host="${ALL_HOSTS[$i]}"
-        if [ "$host" == "hypervisor-1" ]; then
-            ip="${CONTROL_IPS[0]}"
-        elif [ "$host" == "hypervisor-2" ]; then
-            ip="${CONTROL_IPS[1]}"
-        elif [ "$host" == "hypervisor-3" ]; then
-            ip="${CONTROL_IPS[2]}"
-        elif [ "$host" == "hypervisor-4" ]; then
-            ip="${OSD_IPS[0]}"
-        else
-            ip="${OSD_IPS[1]}"
-        fi
+    # Add all hosts using names and IPs
+    for i in "${!ALL_NAMES[@]}"; do
+        name="${ALL_NAMES[$i]}"
+        ip="${ALL_HOSTS[$i]}"
 
-        log_info "Adding $host ($ip) to cluster..."
-        run_ceph_cmd ceph orch host add "$host" "$ip" 2>/dev/null || log_warn "$host may already be added"
+        log_info "Adding $name ($ip) to cluster..."
+        run_ceph_cmd ceph orch host add "$name" "$ip" 2>/dev/null || log_warn "$name may already be added"
     done
 
     # Add labels to control plane hosts
-    for host in "${CONTROL_HOSTS[@]}"; do
-        log_info "Labeling $host as 'control'..."
-        run_ceph_cmd ceph orch host label add "$host" control 2>/dev/null || true
+    for name in "${CONTROL_NAMES[@]}"; do
+        log_info "Labeling $name as 'control'..."
+        run_ceph_cmd ceph orch host label add "$name" control 2>/dev/null || true
     done
 
     # Add labels to OSD hosts
-    for host in "${OSD_HOSTS[@]}"; do
-        log_info "Labeling $host as 'osd'..."
-        run_ceph_cmd ceph orch host label add "$host" osd 2>/dev/null || true
+    for name in "${OSD_NAMES[@]}"; do
+        log_info "Labeling $name as 'osd'..."
+        run_ceph_cmd ceph orch host label add "$name" osd 2>/dev/null || true
     done
 
     log_info "Phase 4 complete: Hosts added and labeled"
@@ -340,7 +490,7 @@ EOF
 
     # Apply OSD spec - pipe directly into cephadm shell
     log_info "Applying OSD specification..."
-    echo "$OSD_SPEC" | ssh "$BOOTSTRAP_HOST" "sudo cephadm shell -- ceph orch apply -i -"
+    echo "$OSD_SPEC" | ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo cephadm shell -- ceph orch apply -i -"
 
     # Wait for OSDs to come up (this can take a while)
     log_info "Waiting for OSDs to deploy (this may take a few minutes)..."
@@ -414,7 +564,7 @@ phase8_deploy_rgw() {
     else
         log_info "Deploying RGW on OSD hosts (port $RGW_PORT)..."
         # Create RGW spec and apply via stdin
-        cat <<EOF | ssh "$BOOTSTRAP_HOST" "sudo cephadm shell -- ceph orch apply -i -"
+        cat <<EOF | ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo cephadm shell -- ceph orch apply -i -"
 service_type: rgw
 service_id: s3-gw
 placement:
@@ -445,12 +595,12 @@ EOF
 
     # Create S3 user (idempotent - will fail silently if exists)
     log_info "Creating S3 user: $RGW_USER..."
-    ssh "$BOOTSTRAP_HOST" "sudo cephadm shell -- radosgw-admin user create --uid=$RGW_USER --display-name='S3_User'" 2>&1 || true
+    ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo cephadm shell -- radosgw-admin user create --uid=$RGW_USER --display-name='S3_User'" 2>&1 || true
 
     # Get user info - run command and capture full output
     log_info "Extracting S3 credentials..."
     local USER_INFO
-    USER_INFO=$(ssh "$BOOTSTRAP_HOST" "sudo cephadm shell -- radosgw-admin user info --uid=$RGW_USER" 2>&1) || true
+    USER_INFO=$(ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo cephadm shell -- radosgw-admin user info --uid=$RGW_USER" 2>&1) || true
 
     # Debug: show if we got user info
     if echo "$USER_INFO" | grep -q "access_key"; then
@@ -470,7 +620,7 @@ EOF
         echo "  Secret Key: $SECRET_KEY"
 
         # Save credentials to file on bootstrap host using echo (more reliable than heredoc over ssh)
-        ssh "$BOOTSTRAP_HOST" "echo 'S3 User Credentials
+        ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "echo 'S3 User Credentials
 ===================
 Access Key: $ACCESS_KEY
 Secret Key: $SECRET_KEY
@@ -499,17 +649,17 @@ phase9_export_configs() {
 
     # Export ceph.conf to host
     log_info "Exporting ceph.conf to $BOOTSTRAP_HOST:/etc/ceph/ceph.conf..."
-    run_ceph_cmd ceph config generate-minimal-conf | ssh "$BOOTSTRAP_HOST" "sudo tee /etc/ceph/ceph.conf > /dev/null"
+    run_ceph_cmd ceph config generate-minimal-conf | ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo tee /etc/ceph/ceph.conf > /dev/null"
 
     # Export admin keyring
     log_info "Exporting admin keyring..."
-    run_ceph_cmd ceph auth get client.admin | ssh "$BOOTSTRAP_HOST" "sudo tee /etc/ceph/ceph.client.admin.keyring > /dev/null"
-    ssh "$BOOTSTRAP_HOST" "sudo chmod 600 /etc/ceph/ceph.client.admin.keyring"
+    run_ceph_cmd ceph auth get client.admin | ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo tee /etc/ceph/ceph.client.admin.keyring > /dev/null"
+    ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo chmod 600 /etc/ceph/ceph.client.admin.keyring"
 
     # Export RBD user keyring
     log_info "Exporting $RBD_USER keyring..."
-    run_ceph_cmd ceph auth get client.$RBD_USER | ssh "$BOOTSTRAP_HOST" "sudo tee /etc/ceph/ceph.client.$RBD_USER.keyring > /dev/null"
-    ssh "$BOOTSTRAP_HOST" "sudo chmod 600 /etc/ceph/ceph.client.$RBD_USER.keyring"
+    run_ceph_cmd ceph auth get client.$RBD_USER | ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo tee /etc/ceph/ceph.client.$RBD_USER.keyring > /dev/null"
+    ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo chmod 600 /etc/ceph/ceph.client.$RBD_USER.keyring"
 
     log_info "Phase 9 complete: Configs exported"
 }
@@ -572,7 +722,7 @@ phase10_verify() {
     log_info "--- Test 8: Full S3 Test with AWS CLI ---"
     # Install AWS CLI on bootstrap host if not present
     log_info "Installing AWS CLI on $BOOTSTRAP_HOST..."
-    ssh "$BOOTSTRAP_HOST" 'if ! which aws > /dev/null 2>&1; then
+    ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" 'if ! which aws > /dev/null 2>&1; then
         sudo apt-get install -y -qq unzip curl
         cd /tmp
         curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
@@ -581,37 +731,37 @@ phase10_verify() {
     fi'
 
     # Get S3 credentials from the credentials file we saved earlier
-    S3_ACCESS_KEY=$(ssh "$BOOTSTRAP_HOST" "sudo grep 'Access Key' /root/s3-credentials.txt 2>/dev/null | cut -d: -f2 | tr -d ' '")
-    S3_SECRET_KEY=$(ssh "$BOOTSTRAP_HOST" "sudo grep 'Secret Key' /root/s3-credentials.txt 2>/dev/null | cut -d: -f2 | tr -d ' '")
+    S3_ACCESS_KEY=$(ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo grep 'Access Key' /root/s3-credentials.txt 2>/dev/null | cut -d: -f2 | tr -d ' '")
+    S3_SECRET_KEY=$(ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo grep 'Secret Key' /root/s3-credentials.txt 2>/dev/null | cut -d: -f2 | tr -d ' '")
 
     if [ -n "$S3_ACCESS_KEY" ] && [ -n "$S3_SECRET_KEY" ]; then
         log_info "Running S3 bucket test..."
         log_info "Using Access Key: $S3_ACCESS_KEY"
 
         # Configure AWS credentials on bootstrap host (as root)
-        ssh "$BOOTSTRAP_HOST" "sudo mkdir -p /root/.aws && echo '[ceph]
+        ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo mkdir -p /root/.aws && echo '[ceph]
 aws_access_key_id = $S3_ACCESS_KEY
 aws_secret_access_key = $S3_SECRET_KEY' | sudo tee /root/.aws/credentials > /dev/null && echo '[profile ceph]
 region = us-east-1' | sudo tee /root/.aws/config > /dev/null"
 
         # Run S3 test as root
-        ssh "$BOOTSTRAP_HOST" "sudo /usr/local/bin/aws --endpoint-url http://192.168.10.14:$RGW_PORT --profile ceph s3 mb s3://ceph-test-bucket" 2>&1 || true
+        ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo /usr/local/bin/aws --endpoint-url http://192.168.10.14:$RGW_PORT --profile ceph s3 mb s3://ceph-test-bucket" 2>&1 || true
         log_info "Created test bucket"
 
-        ssh "$BOOTSTRAP_HOST" "echo 'Hello from Ceph S3 automated test!' | sudo tee /tmp/s3-test.txt > /dev/null"
-        ssh "$BOOTSTRAP_HOST" "sudo /usr/local/bin/aws --endpoint-url http://192.168.10.14:$RGW_PORT --profile ceph s3 cp /tmp/s3-test.txt s3://ceph-test-bucket/test.txt" 2>&1
+        ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "echo 'Hello from Ceph S3 automated test!' | sudo tee /tmp/s3-test.txt > /dev/null"
+        ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo /usr/local/bin/aws --endpoint-url http://192.168.10.14:$RGW_PORT --profile ceph s3 cp /tmp/s3-test.txt s3://ceph-test-bucket/test.txt" 2>&1
         log_info "Uploaded test file"
 
         log_info "Listing bucket contents:"
-        ssh "$BOOTSTRAP_HOST" "sudo /usr/local/bin/aws --endpoint-url http://192.168.10.14:$RGW_PORT --profile ceph s3 ls s3://ceph-test-bucket/" 2>&1
+        ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo /usr/local/bin/aws --endpoint-url http://192.168.10.14:$RGW_PORT --profile ceph s3 ls s3://ceph-test-bucket/" 2>&1
 
         log_info "Downloading and verifying:"
-        ssh "$BOOTSTRAP_HOST" "sudo /usr/local/bin/aws --endpoint-url http://192.168.10.14:$RGW_PORT --profile ceph s3 cp s3://ceph-test-bucket/test.txt /tmp/s3-download.txt" 2>&1
-        ssh "$BOOTSTRAP_HOST" "cat /tmp/s3-download.txt"
+        ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo /usr/local/bin/aws --endpoint-url http://192.168.10.14:$RGW_PORT --profile ceph s3 cp s3://ceph-test-bucket/test.txt /tmp/s3-download.txt" 2>&1
+        ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "cat /tmp/s3-download.txt"
 
         log_info "Cleaning up test bucket..."
-        ssh "$BOOTSTRAP_HOST" "sudo /usr/local/bin/aws --endpoint-url http://192.168.10.14:$RGW_PORT --profile ceph s3 rm s3://ceph-test-bucket/test.txt" 2>&1 || true
-        ssh "$BOOTSTRAP_HOST" "sudo /usr/local/bin/aws --endpoint-url http://192.168.10.14:$RGW_PORT --profile ceph s3 rb s3://ceph-test-bucket" 2>&1 || true
+        ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo /usr/local/bin/aws --endpoint-url http://192.168.10.14:$RGW_PORT --profile ceph s3 rm s3://ceph-test-bucket/test.txt" 2>&1 || true
+        ssh ${SSH_OPTS} ${SSH_USER}@"$BOOTSTRAP_HOST" "sudo /usr/local/bin/aws --endpoint-url http://192.168.10.14:$RGW_PORT --profile ceph s3 rb s3://ceph-test-bucket" 2>&1 || true
 
         log_info "S3 test passed!"
     else
@@ -630,8 +780,9 @@ main() {
     echo "       Ceph Cluster One-Click Setup"
     echo "============================================================"
     echo ""
-    echo "Control Plane: ${CONTROL_HOSTS[*]}"
-    echo "Data Plane:    ${OSD_HOSTS[*]}"
+    echo "Subnet:        192.168.10.0/24"
+    echo "Control Plane: ${CONTROL_HOSTS[*]} (${CONTROL_IPS[*]})"
+    echo "Data Plane:    ${OSD_HOSTS[*]} (${OSD_IPS[*]})"
     echo ""
 
     phase0_fix_ssh_keys
