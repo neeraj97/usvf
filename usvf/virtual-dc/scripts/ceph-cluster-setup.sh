@@ -63,7 +63,7 @@ ALL_NAMES=("hypervisor-1" "hypervisor-2" "hypervisor-3")
 
 # SSH configuration
 SSH_USER="ubuntu"
-SSH_KEY="/root/usvf/virtual-dc/config/vdc-dc1/ssh-keys/id_rsa"
+SSH_KEY="$HOME/usvf/usvf/virtual-dc/config/vdc-dc1/ssh-keys/id_rsa"
 
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ${SSH_KEY}"
 
@@ -71,7 +71,7 @@ SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ${SSH_K
 RBD_POOL="rbd_data"
 RBD_USER="rbduser"
 RGW_USER="s3user"
-RGW_PORT=8000
+RGW_PORT=7480
 
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -568,9 +568,9 @@ service_type: rgw
 service_id: s3-gw
 placement:
   hosts:
-    - 192.168.10.11
-    - 192.168.10.12
-    - 192.168.10.13
+    - hypervisor-1
+    - hypervisor-2
+    - hypervisor-3
 spec:
   rgw_frontend_port: $RGW_PORT
 EOF
@@ -624,7 +624,7 @@ EOF
 ===================
 Access Key: $ACCESS_KEY
 Secret Key: $SECRET_KEY
-Endpoint: http://192.168.10.11:$RGW_PORT or http://192.168.10.12:$RGW_PORT' or http://192.168.10.13:$RGW_PORT' | sudo tee /root/s3-credentials.txt > /dev/null"
+Endpoint: http://192.168.10.11:$RGW_PORT or http://192.168.10.12:$RGW_PORT or http://192.168.10.13:$RGW_PORT' | sudo tee /root/s3-credentials.txt > /dev/null"
 
         log_info "Credentials saved to $BOOTSTRAP_HOST:/root/s3-credentials.txt"
     else

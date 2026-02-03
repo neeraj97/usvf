@@ -9,8 +9,8 @@
 
 set -euo pipefail
 
-OPENSTACK_SCRIPT="~/openstack-deploy.sh"
-CEPH_SCRIPT="~/ceph-cluster-setup.sh"
+OPENSTACK_SCRIPT="$HOME/openstack-deploy.sh"
+CEPH_SCRIPT="$HOME/ceph-cluster-setup.sh"
 
 # Color codes
 RED='\033[0;31m'

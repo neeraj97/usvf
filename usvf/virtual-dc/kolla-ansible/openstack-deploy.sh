@@ -67,7 +67,7 @@ KOLLA_VENV="$HOME/kolla-venv"
 KOLLA_CONFIG="/etc/kolla"
 
 # Ceph admin node (where to run ceph commands)
-CEPH_ADMIN_NODE="hypervisor-1"
+CEPH_ADMIN_NODE="192.168.10.11"
 CEPH_ADMIN_IP="192.168.10.11"
 
 # Controller nodes (derived from subnet)
@@ -93,6 +93,10 @@ OPENSTACK_RELEASE="2024.2"
 
 # SSH user for nodes
 SSH_USER="ubuntu"
+
+# SSH key configuration
+SSH_KEY="$HOME/usvf/usvf/virtual-dc/config/vdc-dc1/ssh-keys/id_rsa"
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ${SSH_KEY}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -132,13 +136,13 @@ log_section() {
 run_on_node() {
     local node=$1
     shift
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${SSH_USER}@${node} "$@"
+    ssh ${SSH_OPTS} ${SSH_USER}@${node} "$@"
 }
 
 run_on_node_sudo() {
     local node=$1
     shift
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${SSH_USER}@${node} "sudo $@"
+    ssh ${SSH_OPTS} ${SSH_USER}@${node} "sudo $@"
 }
 
 wait_for_apt_lock() {
@@ -178,7 +182,7 @@ clean_ssh_known_hosts() {
 
     # Accept new keys with StrictHostKeyChecking=accept-new
     for ip in "${CONTROLLERS[@]}" "${COMPUTES[@]}"; do
-        ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 ubuntu@"$ip" 'echo OK' 2>/dev/null || true
+        ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -i ${SSH_KEY} ubuntu@"$ip" 'echo OK' 2>/dev/null || true
     done
 
     log_success "SSH known_hosts cleaned and new keys accepted"
@@ -415,10 +419,13 @@ destroy_kolla() {
     for node in "${ALL_NODES[@]}"; do
         log_info "Cleaning $node..."
         run_on_node "$node" "sudo bash -c '
-            # Stop and remove all kolla containers
+            # Stop and remove all kolla containers by label
             docker ps -a --filter \"label=kolla_version\" -q 2>/dev/null | xargs -r docker rm -f 2>/dev/null || true
-            # Also catch containers by name pattern
+            # Catch containers by name pattern (including stopped ones)
             docker ps -a --format \"{{.Names}}\" 2>/dev/null | grep -E \"^(kolla_|nova_|neutron_|cinder_|glance_|keystone_|horizon_|heat_|mariadb|rabbitmq|memcached|haproxy|proxysql|fluentd|cron|kolla|openvswitch|ovn)\" | xargs -r docker rm -f 2>/dev/null || true
+            # Extra: Remove any remaining stopped/exited containers that match
+            docker ps -a --filter \"status=exited\" --format \"{{.Names}}\" 2>/dev/null | grep -E \"(kolla|nova|neutron|cinder|glance|keystone|horizon|heat|mariadb|rabbitmq|memcached|haproxy|proxysql|fluentd|cron|openvswitch|ovn)\" | xargs -r docker rm -f 2>/dev/null || true
+            docker ps -a --filter \"status=created\" --format \"{{.Names}}\" 2>/dev/null | grep -E \"(kolla|nova|neutron|cinder|glance|keystone|horizon|heat|mariadb|rabbitmq|memcached|haproxy|proxysql|fluentd|cron|openvswitch|ovn)\" | xargs -r docker rm -f 2>/dev/null || true
             # Remove kolla volumes
             docker volume ls -q 2>/dev/null | grep -E \"^(kolla_|mariadb|rabbitmq)\" | xargs -r docker volume rm -f 2>/dev/null || true
             # Clean up kolla log directories but keep the base
@@ -427,6 +434,10 @@ destroy_kolla() {
             rm -rf /var/lib/docker/volumes/kolla_* 2>/dev/null || true
         '" 2>/dev/null || true
     done
+
+    # Wait a moment for Docker to fully clean up
+    log_info "Waiting for cleanup to complete..."
+    sleep 5
 
     log_success "Stale deployment destroyed on all nodes"
 }
@@ -762,6 +773,10 @@ network
 compute
 storage
 monitoring
+
+# SSH key configuration for all remote hosts
+[baremetal:vars]
+ansible_ssh_private_key_file=~/usvf/usvf/virtual-dc/config/vdc-dc1/ssh-keys/id_rsa
 
 [tls-backend:children]
 control
@@ -1546,6 +1561,30 @@ run_deploy() {
 
     ensure_all_healthy
 
+    # Pre-deployment cleanup: Remove containers that might conflict
+    # (created by bootstrap but not properly handled by deploy)
+    log_info "Pre-deployment cleanup: Removing potential conflicting containers and waiting for apt locks..."
+    for node in "${ALL_NODES[@]}"; do
+        run_on_node "$node" "sudo bash -c '
+            # Wait for any apt/dpkg locks to clear (prevent race conditions during bootstrap)
+            for i in {1..30}; do
+                if ! fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; then
+                    break
+                fi
+                echo \"Waiting for apt lock to clear (attempt \$i/30)...\"
+                sleep 2
+            done
+
+            # Remove stopped/created/exited/dead containers that might conflict
+            for status in exited created dead; do
+                docker ps -a --filter \"status=\$status\" --format \"{{.Names}}\" 2>/dev/null | \
+                grep -E \"(fluentd|kolla_toolbox|haproxy|cron|openvswitch)\" | \
+                xargs -r docker rm -f 2>/dev/null || true
+            done
+        '" 2>/dev/null || true
+    done
+    log_info "Pre-deployment cleanup complete"
+
     source "$KOLLA_VENV/bin/activate"
     cd "$KOLLA_CONFIG"
 
@@ -1568,6 +1607,18 @@ run_deploy() {
                 break
             fi
         done
+
+        # Clean up failed/stopped containers before retry
+        if [ $attempt -lt $max_attempts ]; then
+            log_info "Cleaning up failed containers on all nodes..."
+            for node in "${ALL_NODES[@]}"; do
+                run_on_node "$node" "sudo bash -c '
+                    # Remove failed/stopped/created containers (all problematic ones)
+                    docker ps -a --filter \"status=exited\" --format \"{{.Names}}\" 2>/dev/null | grep -E \"(fluentd|kolla_toolbox|haproxy|openvswitch|cron)\" | xargs -r docker rm -f 2>/dev/null || true
+                    docker ps -a --filter \"status=created\" --format \"{{.Names}}\" 2>/dev/null | grep -E \"(fluentd|kolla_toolbox|haproxy|openvswitch|cron)\" | xargs -r docker rm -f 2>/dev/null || true
+                '" 2>/dev/null || true
+            done
+        fi
 
         if [ "$mariadb_broken" = true ] && [ $attempt -lt $max_attempts ]; then
             log_info "MariaDB cluster appears broken - running mariadb-recovery..."
@@ -1616,7 +1667,7 @@ verify_deployment() {
     openstack service list
 
     log_info "Testing Ceph connectivity from cinder_volume..."
-    ssh ${SSH_USER}@${COMPUTES[0]} "sudo docker exec cinder_volume ceph -s --id cinder"
+    ssh ${SSH_OPTS} ${SSH_USER}@${COMPUTES[0]} "sudo docker exec cinder_volume ceph -s --id cinder"
 
     # Get Horizon password
     ADMIN_PASS=$(grep keystone_admin_password "$KOLLA_CONFIG/passwords.yml" | awk '{print $2}')

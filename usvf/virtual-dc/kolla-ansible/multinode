@@ -40,6 +40,10 @@ compute
 storage
 monitoring
 
+# SSH key configuration for all remote hosts
+[baremetal:vars]
+ansible_ssh_private_key_file=/root/usvf/virtual-dc/config/vdc-dc1/ssh-keys/id_rsa
+
 [tls-backend:children]
 control
 
