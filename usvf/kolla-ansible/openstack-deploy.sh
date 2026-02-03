@@ -49,7 +49,8 @@ for arg in "$@"; do
     esac
 done
 
-# Validate subnet is provided
+# Subnet validation currently disabled - scripts default to dc1 (192.168.10)
+# To enforce --subnet parameter requirement, uncomment the validation below:
 # if [ -z "$SUBNET_BASE" ]; then
 #     echo "ERROR: --subnet is required"
 #     echo "Usage: $0 --subnet=192.168.10   # for dc1"

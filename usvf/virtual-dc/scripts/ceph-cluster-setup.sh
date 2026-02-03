@@ -65,7 +65,23 @@ ALL_NAMES=("hypervisor-1" "hypervisor-2" "hypervisor-3" "hypervisor-4" "hypervis
 SSH_USER="ubuntu"
 # Map subnet to DC name: 192.168.10 -> dc1, 192.168.11 -> dc2, etc.
 SUBNET_OCTET="${SUBNET_BASE##*.}"  # Extract last octet (10, 11, etc.)
-SSH_KEY="/root/usvf/usvf/virtual-dc/config/vdc-dc1/ssh-keys/id_rsa"
+
+# Auto-detect SSH key location (supports both repo and deployed paths)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+# Try repo-relative path first, fallback to deployed location
+if [ -f "$REPO_ROOT/usvf/virtual-dc/config/vdc-dc1/ssh-keys/id_rsa" ]; then
+    SSH_KEY="$REPO_ROOT/usvf/virtual-dc/config/vdc-dc1/ssh-keys/id_rsa"
+elif [ -f "/root/usvf/usvf/virtual-dc/config/vdc-dc1/ssh-keys/id_rsa" ]; then
+    SSH_KEY="/root/usvf/usvf/virtual-dc/config/vdc-dc1/ssh-keys/id_rsa"
+else
+    echo "ERROR: SSH key not found at expected locations:"
+    echo "  - $REPO_ROOT/usvf/virtual-dc/config/vdc-dc1/ssh-keys/id_rsa"
+    echo "  - /root/usvf/usvf/virtual-dc/config/vdc-dc1/ssh-keys/id_rsa"
+    exit 1
+fi
+
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ${SSH_KEY}"
 
 # RBD and RGW Configuration
