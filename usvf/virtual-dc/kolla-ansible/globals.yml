@@ -56,5 +56,32 @@ enable_horizon: "yes"
 enable_heat: "yes"
 enable_fluentd: "yes"
 enable_cinder: "yes"
-enable_cinder_backend_lvm: "yes"
-cinder_target_helper: "lioadm"
+
+# ========================
+# 7. Ceph Configuration (External Cluster)
+# ========================
+# Glance - Store images in Ceph
+glance_backend_ceph: "yes"
+glance_backend_file: "no"
+ceph_glance_keyring: "client.glance.keyring"
+ceph_glance_user: "glance"
+ceph_glance_pool_name: "images"
+
+# Cinder - Block storage with Ceph RBD
+enable_cinder_backend_lvm: "no"
+cinder_backend_ceph: "yes"
+ceph_cinder_keyring: "client.cinder.keyring"
+ceph_cinder_user: "cinder"
+ceph_cinder_pool_name: "volumes"
+
+# Cinder Backup to Ceph
+cinder_backup_driver: "ceph"
+ceph_cinder_backup_keyring: "client.cinder-backup.keyring"
+ceph_cinder_backup_user: "cinder-backup"
+ceph_cinder_backup_pool_name: "backups"
+
+# Nova - Ephemeral disks and live migration with Ceph
+nova_backend_ceph: "yes"
+ceph_nova_keyring: "client.nova.keyring"
+ceph_nova_user: "nova"
+ceph_nova_pool_name: "vms"

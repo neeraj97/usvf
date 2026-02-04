@@ -92,7 +92,7 @@ create_management_network() {
 auto_assign_subnet() {
     # Find next available /24 subnet in 192.168.x.0/24 range
     local base_octet=10
-    local VDC_REGISTRY="$PROJECT_ROOT/.vdc-registry.json"
+    local VDC_REGISTRY="$PROJECT_ROOT/config/vdc-registry.json"
 
     # Get used subnets from both registry and active networks
     local used_subnets=""

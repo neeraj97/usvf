@@ -1,24 +1,22 @@
-# These initial groups are the only groups required to be modified. The
-# additional groups are for more control of the environment.
+# OpenStack Multinode Inventory
+# Control Plane: hypervisor-1,2,3
+# Compute/Storage: hypervisor-4,5
+# Subnet: 192.168.10.0/24
+
 [control]
-# These hostname must be resolvable from your deployment host
-control01 ansible_host=192.168.10.11 api_ip=10.1.0.1 tunnel_ip=10.1.0.1
-control02 ansible_host=192.168.10.12 api_ip=10.1.0.2 tunnel_ip=10.1.0.2
-control03 ansible_host=192.168.10.13 api_ip=10.1.0.3 tunnel_ip=10.1.0.3
+control01 ansible_host=192.168.10.11 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.1 tunnel_ip=10.1.0.1
+control02 ansible_host=192.168.10.12 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.2 tunnel_ip=10.1.0.2
+control03 ansible_host=192.168.10.13 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.3 tunnel_ip=10.1.0.3
 
-# The above can also be specified as follows:
-#control[01:03]     ansible_user=kolla
-
-# The network nodes are where your l3-agent and loadbalancers will run
-# This can be the same as a host in the control group
 [network]
 control01
 control02
 control03
 
 [compute]
-compute01 ansible_host=192.168.10.14 api_ip=10.1.0.4 tunnel_ip=10.1.0.4
-compute02 ansible_host=192.168.10.15 api_ip=10.1.0.5 tunnel_ip=10.1.0.5
+compute01 ansible_host=192.168.10.11 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.1 tunnel_ip=10.1.0.1
+compute02 ansible_host=192.168.10.12 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.2 tunnel_ip=10.1.0.2
+compute03 ansible_host=192.168.10.13 ansible_user=ubuntu ansible_become=true api_ip=10.1.0.3 tunnel_ip=10.1.0.3
 
 [monitoring]
 control01
@@ -41,6 +39,10 @@ network
 compute
 storage
 monitoring
+
+# SSH key configuration for all remote hosts
+[baremetal:vars]
+ansible_ssh_private_key_file=/root/usvf/virtual-dc/config/vdc-dc1/ssh-keys/id_rsa
 
 [tls-backend:children]
 control
