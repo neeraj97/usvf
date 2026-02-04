@@ -9,8 +9,9 @@
 
 set -euo pipefail
 
-OPENSTACK_SCRIPT="$HOME/openstack-deploy.sh"
-CEPH_SCRIPT="$HOME/ceph-cluster-setup.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OPENSTACK_SCRIPT="$SCRIPT_DIR/openstack-deploy.sh"
+CEPH_SCRIPT="$(dirname "$SCRIPT_DIR")/scripts/ceph-cluster-setup.sh"
 
 # Color codes
 RED='\033[0;31m'
@@ -61,7 +62,6 @@ phase2_create_base_configs() {
 # =============================================================================
 phase3_openstack_bootstrap() {
     log_section "PHASE 3: OpenStack Bootstrap"
-    sleep 100
 
     # Prevent APT lock race conditions during bootstrap
     log_info "Preparing nodes for bootstrap (disabling unattended-upgrades and waiting for APT locks)..."
@@ -147,13 +147,13 @@ phase7_distribute_ceph_configs() {
 phase8_openstack_deploy() {
     log_section "PHASE 8: OpenStack Deployment"
 
-    log_info "Step 7.1: Running prechecks..."
+    log_info "Step 8.1: Running prechecks..."
     bash "$OPENSTACK_SCRIPT" prechecks
 
-    log_info "Step 7.2: Running deployment..."
+    log_info "Step 8.2: Running deployment..."
     bash "$OPENSTACK_SCRIPT" deploy
 
-    log_info "Step 7.3: Running post-deploy..."
+    log_info "Step 8.3: Running post-deploy..."
     bash "$OPENSTACK_SCRIPT" post-deploy
 
     log_success "OpenStack deployment complete"

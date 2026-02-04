@@ -487,6 +487,124 @@ install_kolla_ansible() {
     log_info "Installing Ansible dependencies..."
     kolla-ansible install-deps
 
+    # ---------------------------------------------------------------
+    # Patch kolla_docker_worker.py to fix Docker 409 Conflict race condition
+    # Root cause: Docker's containers(all=True) API can miss containers that
+    # exist in Docker's internal name database, causing check_container() to
+    # return None while create_container() gets 409 (name already in use).
+    # Fix: (1) Add inspect_container fallback to check_container()
+    #       (2) Add 409 retry logic to create_container()
+    # ---------------------------------------------------------------
+    log_info "Applying Docker 409 Conflict fix to kolla_docker_worker.py..."
+    local KOLLA_DOCKER_WORKER="$KOLLA_VENV/share/kolla-ansible/ansible/module_utils/kolla_docker_worker.py"
+
+    # Write the patch script to a temp file (avoids bash escaping issues)
+    cat > /tmp/kolla_patch.py << 'PATCH_SCRIPT'
+import sys
+
+filepath = sys.argv[1]
+
+with open(filepath, 'r') as f:
+    content = f.read()
+
+# --- Patch 1: check_container() with inspect fallback ---
+old_check = (
+    '    def check_container(self):\n'
+    "        find_name = '/{}'.format(self.params.get('name'))\n"
+    '        for cont in self.dc.containers(all=True):\n'
+    "            if find_name in cont['Names']:\n"
+    '                return cont'
+)
+
+new_check = (
+    '    def check_container(self):\n'
+    "        find_name = '/{}'.format(self.params.get('name'))\n"
+    '        for cont in self.dc.containers(all=True):\n'
+    "            if find_name in cont['Names']:\n"
+    '                return cont\n'
+    '        # Fallback: use inspect_container to handle Docker API inconsistency\n'
+    '        # where containers(all=True) misses a container that actually exists\n'
+    '        try:\n'
+    "            info = self.dc.inspect_container(self.params.get('name'))\n"
+    "            state = info.get('State', {})\n"
+    "            status = state.get('Status', 'unknown')\n"
+    "            if status == 'running':\n"
+    "                status_str = 'Up (inspect)'\n"
+    "            elif status == 'created':\n"
+    "                status_str = 'Created'\n"
+    "            elif status == 'exited':\n"
+    "                status_str = 'Exited ({})'.format(state.get('ExitCode', 0))\n"
+    '            else:\n'
+    '                status_str = status.capitalize()\n'
+    '            return {\n'
+    "                'Id': info['Id'],\n"
+    "                'Names': [info.get('Name', find_name)],\n"
+    "                'Status': status_str,\n"
+    "                'Image': info.get('Image', ''),\n"
+    '            }\n'
+    '        except Exception:\n'
+    '            return None'
+)
+
+# --- Patch 2: create_container() with 409 retry ---
+old_create = (
+    '    def create_container(self):\n'
+    '        self.changed = True\n'
+    '        options = self.build_container_options()\n'
+    '        self.dc.create_container(**options)\n'
+    "        if self.params.get('restart_policy') != 'oneshot':\n"
+    '            self.changed |= self.systemd.create_unit_file()'
+)
+
+new_create = (
+    '    def create_container(self):\n'
+    '        self.changed = True\n'
+    '        options = self.build_container_options()\n'
+    '        try:\n'
+    '            self.dc.create_container(**options)\n'
+    '        except docker.errors.APIError as e:\n'
+    '            if e.response.status_code == 409:\n'
+    '                import time\n'
+    "                name = self.params.get('name')\n"
+    '                # Force-remove the ghost container and retry\n'
+    '                try:\n'
+    '                    self.dc.remove_container(container=name, force=True)\n'
+    '                except docker.errors.APIError:\n'
+    '                    pass\n'
+    '                time.sleep(2)\n'
+    '                self.dc.create_container(**options)\n'
+    '            else:\n'
+    '                raise\n'
+    "        if self.params.get('restart_policy') != 'oneshot':\n"
+    '            self.changed |= self.systemd.create_unit_file()'
+)
+
+patched = False
+if old_check in content:
+    content = content.replace(old_check, new_check)
+    print('Patched check_container() with inspect fallback')
+    patched = True
+else:
+    print('WARNING: check_container() already patched or format changed')
+
+if old_create in content:
+    content = content.replace(old_create, new_create)
+    print('Patched create_container() with 409 retry logic')
+    patched = True
+else:
+    print('WARNING: create_container() already patched or format changed')
+
+if patched:
+    with open(filepath, 'w') as f:
+        f.write(content)
+    print('Patch saved to ' + filepath)
+else:
+    print('No changes needed')
+PATCH_SCRIPT
+
+    python3 /tmp/kolla_patch.py "$KOLLA_DOCKER_WORKER"
+    rm -f /tmp/kolla_patch.py
+
     log_info "Creating Kolla config directory..."
     sudo mkdir -p "$KOLLA_CONFIG"
     sudo chown $USER:$USER "$KOLLA_CONFIG"
