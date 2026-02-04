@@ -487,53 +487,6 @@ install_kolla_ansible() {
     log_info "Installing Ansible dependencies..."
     kolla-ansible install-deps
 
-    # Patch kolla_docker_worker.py to handle 409 Conflict errors
-    # This fixes a race condition where Docker's container list API hasn't updated
-    # but the create API rejects duplicate names, causing spurious 409 errors
-    log_info "Patching Kolla-Ansible docker worker for 409 Conflict handling..."
-    local worker_file="$KOLLA_VENV/share/kolla-ansible/ansible/module_utils/kolla_docker_worker.py"
-    if [ -f "$worker_file" ]; then
-        python3 -c "
-import sys
-filepath = '$worker_file'
-with open(filepath, 'r') as f:
-    content = f.read()
-
-old = '''    def create_container(self):
-        self.changed = True
-        options = self.build_container_options()
-        self.dc.create_container(**options)
-        if self.params.get('restart_policy') != 'oneshot':
-            self.changed |= self.systemd.create_unit_file()'''
-
-new = '''    def create_container(self):
-        self.changed = True
-        options = self.build_container_options()
-        try:
-            self.dc.create_container(**options)
-        except docker.errors.APIError as e:
-            if '409' in str(e):
-                # Container name conflict (race condition) - remove and retry
-                name = self.params.get('name')
-                self.dc.remove_container(name, force=True)
-                import time
-                time.sleep(1)
-                self.dc.create_container(**options)
-            else:
-                raise
-        if self.params.get('restart_policy') != 'oneshot':
-            self.changed |= self.systemd.create_unit_file()'''
-
-if old in content:
-    content = content.replace(old, new)
-    with open(filepath, 'w') as f:
-        f.write(content)
-    print('Patched kolla_docker_worker.py successfully')
-else:
-    print('Patch already applied or code structure changed')
-"
-    fi
-
     log_info "Creating Kolla config directory..."
     sudo mkdir -p "$KOLLA_CONFIG"
     sudo chown $USER:$USER "$KOLLA_CONFIG"
